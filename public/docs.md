@@ -1,9 +1,5 @@
 # Code → Video: Dokumentasi Composition
 
-Dokumen ini menjelaskan cara menulis composition untuk aplikasi **Code → Video**.
-Berikan dokumen ini ke AI agent (ChatGPT, Claude, Gemini, dll.) agar bisa membuat
-composition baru yang langsung bisa dijalankan.
-
 ---
 
 ## 1. Gambaran umum
