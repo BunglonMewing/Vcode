@@ -13,7 +13,6 @@ Code → Video is a lightweight, self-hosted web application that generates MP4 
 - Render history that persists across page reloads
 - Video gallery with download, move, and delete actions
 - Local storage of saved compositions, plus import and export as JSON files
-- Built-in documentation that can be copied or downloaded as Markdown, for use with AI assistants
 
 ## Requirements
 
