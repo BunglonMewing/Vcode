@@ -235,11 +235,46 @@ canvas { display: block; max-width: 100%; max-height: 50vh; width: auto; height:
 .saved-row .meta { font-size: 12px; color: var(--on-var); margin-top: 2px; }
 
 /*  Dokumentasi  */
-pre.doc {
-  margin: 14px 0 0; max-height: 55vh; overflow: auto;
-  background: var(--surface-1); border-radius: 12px; padding: 14px;
-  font: 12.5px/1.55 ui-monospace, Menlo, Consolas, monospace;
-  color: #cac4d0; white-space: pre-wrap; word-break: break-word;
+/* ---------- Dokumentasi (Markdown) ---------- */
+.md {
+  display: block; margin-top: 14px; max-height: 60vh; overflow: auto;
+  font-size: 14px; line-height: 1.65; color: var(--on); overflow-wrap: anywhere;
+}
+.md h1 { font-size: 22px; font-weight: 500; color: var(--primary); margin: 0 0 .6em; }
+.md h2 {
+  font-size: 17px; font-weight: 500; color: var(--primary);
+  margin: 1.6em 0 .6em; padding-bottom: 6px; border-bottom: 1px solid var(--outline-v);
+}
+.md h3 { font-size: 15px; font-weight: 500; color: var(--on); margin: 1.2em 0 .4em; }
+.md p, .md ul, .md ol { margin: .6em 0; }
+.md ul, .md ol { padding-left: 1.4em; }
+.md li + li { margin-top: .25em; }
+.md a { color: var(--primary); }
+.md hr { border: 0; border-top: 1px solid var(--outline-v); margin: 1.4em 0; }
+.md code {
+  font: 12.5px ui-monospace, Menlo, Consolas, monospace;
+  background: var(--surface-3); color: var(--ok); padding: 1px 6px; border-radius: 6px;
+}
+.md pre {
+  background: var(--surface-1); border-radius: 12px; padding: 12px;
+  overflow-x: auto; margin: .8em 0;
+}
+.md pre code {
+  background: none; padding: 0; color: #c7f0d6;
+  font-size: 12.5px; line-height: 1.5; white-space: pre;
+}
+.md table {
+  display: block; width: 100%; overflow-x: auto; border-collapse: collapse;
+  font-size: 13px; margin: .8em 0;
+}
+.md th, .md td {
+  border: 1px solid var(--outline-v); padding: 6px 8px; text-align: left; vertical-align: top;
+}
+.md th { background: var(--surface-3); font-weight: 500; }
+.md blockquote {
+  margin: .8em 0; padding: 8px 12px; color: var(--on-var);
+  border-left: 3px solid var(--primary); background: var(--surface-1);
+  border-radius: 0 8px 8px 0;
 }
 
 /*  Navigasi bawah  */
