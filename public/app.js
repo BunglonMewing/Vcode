@@ -156,9 +156,6 @@ document.querySelectorAll('[data-group]').forEach(group => {
 });
 
 //  DURASI KUSTOM 
-// commit = false: saat mengetik. Kolom boleh kosong, nilai hanya dibaca jika valid.
-// commit = true: saat blur/Enter/memilih chip. Nilai kosong atau tidak valid
-// dikembalikan ke durasi terakhir yang sah.
 function applyCustomDur(commit = false) {
   const raw = $('durInput').value.trim();
   let v = parseFloat(raw);
@@ -173,7 +170,7 @@ function applyCustomDur(commit = false) {
   if (isNaN(v) || v <= 0) {
     v = state.dur > 0 ? state.dur : 5;
   }
-  v = Math.round(v * 10) / 10; // pembulatan ke 0.1 detik
+  v = Math.round(v * 10) / 10;
   $('durInput').value = v;
   state.dur = v;
   warnDuration(v);
@@ -730,9 +727,19 @@ async function loadDocs() {
   if (docsText) return;
   try {
     docsText = await (await fetch('/docs.md')).text();
-    $('docText').textContent = docsText;
+    renderDocs(docsText);
   } catch {
-    $('docText').textContent = 'Gagal memuat dokumentasi.';
+    $('docView').textContent = 'Gagal memuat dokumentasi.';
+  }
+}
+
+function renderDocs(md) {
+  const view = $('docView');
+  if (window.marked) {
+    view.innerHTML = marked.parse(md, { gfm: true });
+  } else {
+    // Fallback jika CDN marked tidak termuat: tampilkan teks mentah
+    view.textContent = md;
   }
 }
 
@@ -745,7 +752,7 @@ $('copyDocs').onclick = async () => {
     ta.value = docsText; document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); ta.remove();
   }
-  toast('Dokumentasi disalin', 'success', 'copy');
+  toast('Markdown dokumentasi disalin', 'success', 'copy');
 };
 
 //  RESET / EKSPOR / IMPOR 
