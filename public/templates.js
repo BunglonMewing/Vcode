@@ -1,4 +1,4 @@
-const TEMPLATES = {
+export const TEMPLATES = {
   particles: `/* props [] */
 // Partikel 2D bergerak dengan seed tetap (deterministik)
 const N = 80;

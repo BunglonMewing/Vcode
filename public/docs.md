@@ -11,8 +11,8 @@ Composition adalah **body fungsi JavaScript** yang menggambar satu frame pada ca
 berdasarkan waktu `t`. Aplikasi memanggil fungsi ini berulang kali:
 
 - Di **Preview**, `t` mengikuti waktu nyata dan berulang setiap `D` detik.
-- Di **Render**, `t` dihitung per frame: `t = frame / fps`. Setiap frame dikirim ke FFmpeg
-  untuk dijadikan MP4.
+- Di **Render**, `t` dihitung per frame: `t = frame / fps`. Setiap frame di-encode jadi video
+  oleh browser di perangkat ini.
 
 Karena render harus **deterministik**, nilai `t` yang sama harus selalu menghasilkan gambar yang sama.
 
@@ -196,18 +196,16 @@ dan berikan file tersebut bersama gambar referensi ke AI agent.
 2. Panel **Props** akan muncul otomatis. Atur nilainya.
 3. Buka tab **Render**, tekan **Preview** untuk memeriksa hasilnya.
 4. Pilih resolusi, rasio, kualitas, FPS, dan durasi, lalu tekan **Render**.
-5. Buka tab **Galeri** untuk memutar, memindahkan, atau menghapus video.
+5. Buka tab **Galeri** untuk memutar, mengunduh, atau menghapus video.
 6. Simpan composition di tab **Simpan** agar bisa dipakai lagi.
 
 ---
 
 ## 10. Penyimpanan Video dan Composition
 
-- Video hasil render disimpan di folder `output/` pada server dan muncul di tab **Galeri**.
-- Untuk memindahkan video ke penyimpanan perangkat, gunakan tombol **Pindah**. Tujuan default-nya
-  `~/storage/shared/Movies/CodeVideo`, yang tampil sebagai folder **Movies/CodeVideo** di perangkat
-  dan langsung terlihat di aplikasi galeri.
-- Jalankan `termux-setup-storage` sekali di Termux untuk mengaktifkan fitur ini.
-- Video yang sudah dipindahkan tidak lagi muncul di Galeri aplikasi.
-- Composition yang disimpan di tab **Simpan** tersimpan di `localStorage` browser, bukan di server.
+- Video hasil render diunggah ke server dan disimpan di folder `output/`, lalu muncul di tab **Galeri**.
+- Tombol **Unduh** mengambil file `.mp4` (atau `.webm`) dari server ke folder unduhan perangkat.
+- Menghapus video di Galeri menghapus file di `output/`. File yang sudah diunduh tetap ada.
+- Jika server tidak bisa dijangkau saat menyimpan, video tetap bisa diunduh dari panel hasil render.
+- Composition yang disimpan di tab **Simpan** tersimpan di `localStorage` browser.
   Gunakan **Ekspor** untuk memindahkannya ke perangkat atau browser lain.

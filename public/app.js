@@ -1,251 +1,280 @@
+import { TEMPLATES } from './templates.js';
+import { engineInfo, renderComposition, decodeAudio } from './render.js';
+import { listVideos, saveVideo, removeVideo, videoUrl } from './gallery.js';
+
 const $ = id => document.getElementById(id);
-const cv = $('cv');
-const ctx = cv.getContext('2d');
-const STORE_KEY = 'codevideo.saved.v1';
-const DEFAULT_TPL = 'particles';
-const DEFAULT_CODE = TEMPLATES[DEFAULT_TPL];
-const ACTIVE_KEY = 'codevideo.activeRender';
+const canvas = $('cv');
+const ctx = canvas.getContext('2d');
 
-const TPL_META = {
-  particles: ['Partikel', '2D'], bars: ['Bar chart', '2D'], typewriter: ['Ketik', '2D'],
-  wave: ['Gelombang', '2D'], pulse: ['Denyut', '2D'],
-  cube: ['Kubus', '3D'], globe: ['Bola titik', '3D'], torus: ['Torus', '3D'],
-};
+const TABS = ['editor', 'render', 'gallery', 'saved', 'docs'];
 const TITLES = { editor: 'Editor', render: 'Render', gallery: 'Galeri', saved: 'Tersimpan', docs: 'Dokumentasi' };
-
-//  STATE 
-const state = { size: 720, ratio: '1:1', fps: 30, dur: 5, quality: 'medium' };
+const TEMPLATE_NAMES = {
+  particles: ['Partikel', '2D'],
+  bars: ['Bar chart', '2D'],
+  typewriter: ['Ketik', '2D'],
+  wave: ['Gelombang', '2D'],
+  pulse: ['Denyut', '2D'],
+  cube: ['Kubus', '3D'],
+  globe: ['Bola titik', '3D'],
+  torus: ['Torus', '3D'],
+};
+const DEFAULT_TEMPLATE = 'particles';
+const DEFAULT_CODE = TEMPLATES[DEFAULT_TEMPLATE];
+const SAVED_KEY = 'codevideo.saved.v1';
 const RATIOS = { '1:1': [1, 1], '16:9': [16, 9], '9:16': [9, 16], '4:5': [4, 5] };
 const QUALITY_LABEL = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' };
-const DUR_WARN_LIMIT = 120;
+const DURATION_WARN = 120;
+
+const state = { size: 720, ratio: '1:1', fps: 30, dur: 5, quality: 'medium' };
 let propValues = {};
-let schemaKey = null;
+let schemaSignature = null;
 let busy = false;
-let raf = null;
-let abortRender = false;
-let defaultDest = '';
-let audio = null; // { id, name, duration, loop }
-const scrollMemo = {};
+let previewFrame = null;
+let renderController = null;
+let audio = null;
+let resultUrl = null;
 
 function dims() {
   const [rw, rh] = RATIOS[state.ratio];
-  let W, H;
-  if (rw >= rh) { W = state.size; H = state.size * rh / rw; }
-  else          { H = state.size; W = state.size * rw / rh; }
-  W = Math.round(W / 2) * 2;
-  H = Math.round(H / 2) * 2;
-  return { W, H, fps: state.fps, D: state.dur };
+  let width, height;
+  if (rw >= rh) {
+    width = state.size;
+    height = state.size * rh / rw;
+  } else {
+    height = state.size;
+    width = state.size * rw / rh;
+  }
+  return {
+    width: Math.round(width / 2) * 2,
+    height: Math.round(height / 2) * 2,
+    fps: state.fps,
+    duration: state.dur,
+  };
 }
 
 function refreshInfo() {
   const d = dims();
-  $('dims').textContent = `${d.W}×${d.H}`;
-  $('frames').textContent = Math.round(d.D * d.fps);
+  $('dims').textContent = `${d.width}×${d.height}`;
+  $('frames').textContent = String(Math.round(d.duration * d.fps));
   $('qLabel').textContent = QUALITY_LABEL[state.quality];
-  $('hint').classList.toggle('show', state.size >= 1440);
-  $('hint').querySelector('span').textContent = state.size >= 2160
-    ? 'Render 4K butuh waktu lama dan memori besar. Gunakan Low atau Medium jika lambat.'
-    : 'Render 1440p ke atas lebih lama dan butuh memori lebih besar.';
+
+  const hint = $('hint');
+  hint.hidden = state.size < 1440;
+  hint.querySelector('span:last-child').textContent = state.size >= 2160
+    ? '4K butuh memori besar. Turunkan resolusi atau kualitas jika render gagal.'
+    : 'Resolusi 1440p ke atas lebih berat untuk browser.';
+
+  refreshDurationWarn(state.dur);
   refreshAudioNote();
 }
 
-//  TAB 
-function currentTab() {
-  const a = document.querySelector('.page.active');
-  return a ? a.id.replace('page-', '') : 'editor';
+function refreshDurationWarn(value) {
+  const warn = $('durWarn');
+  const over = Number.isFinite(value) && value > DURATION_WARN;
+  warn.hidden = !over;
+  if (over) {
+    warn.querySelector('span:last-child').textContent =
+      `Durasi ${value} detik melewati ${DURATION_WARN} detik. Render akan lama dan memori browser bisa penuh.`;
+  }
 }
 
-function showTab(name) {
-  const prev = currentTab();
-  if (prev !== name) scrollMemo[prev] = window.scrollY;
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
-  $('pageTitle').textContent = TITLES[name] || name;
-  if (name === 'gallery') loadGallery();
-  if (name === 'saved') renderSaved();
-  if (name === 'docs') loadDocs();
-  window.scrollTo(0, scrollMemo[name] || 0);
+function activeTab() {
+  const name = location.hash.replace('#', '');
+  return TABS.includes(name) ? name : 'editor';
 }
 
-document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => showTab(b.dataset.tab));
-$('toGallery').onclick = () => showTab('gallery');
-if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+function showTab() {
+  const tab = activeTab();
+  TABS.forEach(name => {
+    $(`page-${name}`).hidden = name !== tab;
+    const link = document.querySelector(`.nav-item[data-tab="${name}"]`);
+    if (name === tab) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  $('pageTitle').textContent = TITLES[tab];
+  if (tab !== 'render') stopPreview();
+  if (tab === 'gallery') loadGallery();
+  if (tab === 'saved') renderSaved();
+  if (tab === 'docs') loadDocs();
+  window.scrollTo(0, 0);
+}
 
-//  SNACKBAR 
-const SNACK_ICON = { success: 'circle-check', error: 'circle-exclamation', warn: 'triangle-exclamation', info: 'circle-info' };
-function toast(msg, type = 'info', icon = null) {
+const SNACK_ICON = { success: 'check_circle', error: 'error', warn: 'warning', info: 'info' };
+
+function toast(message, type = 'info', icon = null) {
   const host = $('snackbars');
-  host.querySelectorAll('.snack').forEach(s => s.remove());
-  const el = document.createElement('div');
-  el.className = `snack ${type}`;
-  el.setAttribute('role', 'status');
-  el.innerHTML = `<i class="fa-solid fa-${icon || SNACK_ICON[type]}"></i><span></span>`;
-  el.querySelector('span').textContent = msg;
-  host.appendChild(el);
-  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 200); }, 3200);
+  host.querySelectorAll('.snack').forEach(node => node.remove());
+
+  const snack = document.createElement('div');
+  snack.className = 'snack';
+  const mark = document.createElement('span');
+  mark.className = 'ms';
+  mark.setAttribute('aria-hidden', 'true');
+  mark.textContent = icon || SNACK_ICON[type] || 'info';
+  const text = document.createElement('span');
+  text.textContent = message;
+  snack.append(mark, text);
+  host.appendChild(snack);
+
+  setTimeout(() => {
+    snack.classList.add('is-out');
+    setTimeout(() => snack.remove(), 200);
+  }, 3600);
 }
 
-//  DIALOG 
-function confirmBox(title, text, opts = {}) {
+function ask({ title, text, icon = 'info', okText = 'OK', danger = false, input = null }) {
+  const dialog = $('dialog');
+  const iconBox = $('mIcon');
+  iconBox.className = `dialog__icon${danger ? ' is-error' : ''}`;
+  iconBox.innerHTML = `<span class="ms" aria-hidden="true">${icon}</span>`;
+  $('mTitle').textContent = title;
+  $('mText').textContent = text;
+  $('mOk').textContent = okText;
+
+  const field = $('mField');
+  const inputEl = $('mInput');
+  field.hidden = !input;
+  if (input) {
+    inputEl.value = input.value || '';
+    inputEl.placeholder = ' ';
+    $('mLabel').textContent = input.label || 'Nilai';
+  }
+
+  dialog.returnValue = '';
+  dialog.showModal();
+  if (input) {
+    setTimeout(() => {
+      inputEl.focus();
+      inputEl.select();
+    }, 30);
+  }
+
   return new Promise(resolve => {
-    const icon = $('mIcon');
-    icon.className = 'dlg-icon ' + (opts.kind || '');
-    icon.innerHTML = `<i class="fa-solid fa-${opts.icon || 'circle-info'}"></i>`;
-    $('mTitle').textContent = title;
-    $('mText').textContent = text;
-    const inp = $('mInput');
-    inp.hidden = !opts.input;
-    if (opts.input) { inp.value = opts.input.value || ''; inp.placeholder = opts.input.placeholder || ''; }
-    const ok = $('mOk');
-    ok.textContent = opts.okText || 'OK';
-    ok.className = 'btn text ' + (opts.okClass || 'primary');
-    if (opts.okClass === 'danger') ok.classList.add('danger-txt');
-    $('overlay').classList.add('show');
-    if (opts.input) setTimeout(() => inp.focus(), 60);
-    const done = v => {
-      $('overlay').classList.remove('show');
-      ok.onclick = $('mCancel').onclick = null;
-      resolve(v);
+    const onKey = event => {
+      if (event.key === 'Enter' && input) {
+        event.preventDefault();
+        dialog.close('ok');
+      }
     };
-    ok.onclick = () => done(opts.input ? inp.value.trim() : true);
-    $('mCancel').onclick = () => done(opts.input ? null : false);
+    if (input) inputEl.addEventListener('keydown', onKey);
+
+    dialog.addEventListener('close', () => {
+      if (input) inputEl.removeEventListener('keydown', onKey);
+      if (dialog.returnValue !== 'ok') return resolve(input ? null : false);
+      resolve(input ? inputEl.value.trim() : true);
+    }, { once: true });
   });
 }
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && $('overlay').classList.contains('show')) $('mCancel').click();
-});
 
-//  PENGATURAN RENDER 
-function setBusy(on) {
-  busy = on;
-  $('play').disabled = on;
-  $('render').disabled = on;
-  $('saveBtn').disabled = on;
-  $('pickAudio').disabled = on;
-  $('clearAudio').disabled = on;
-  $('loopAudio').disabled = on;
-}
+function selectChip(group, value) {
+  document.querySelectorAll(`[data-group="${group}"] .chip`).forEach(chip => {
+    chip.setAttribute('aria-pressed', String(chip.dataset.value === value));
+  });
 
-function setChip(key, value) {
-  const group = document.querySelector(`[data-group="${key}"]`);
-  group.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.value === value));
-  if (key === 'dur') $('customRow').style.display = value === 'custom' ? 'flex' : 'none';
-  if (key === 'size') state.size = +value;
-  else if (key === 'ratio') state.ratio = value;
-  else if (key === 'fps') state.fps = +value;
-  else if (key === 'quality') state.quality = value;
-  else if (key === 'dur' && value !== 'custom') {
-    state.dur = +value;
-    $('durWarn').classList.remove('show');
+  if (group === 'size') state.size = Number(value);
+  else if (group === 'ratio') state.ratio = value;
+  else if (group === 'fps') state.fps = Number(value);
+  else if (group === 'quality') state.quality = value;
+  else if (group === 'dur') {
+    $('customRow').hidden = value !== 'custom';
+    if (value !== 'custom') state.dur = Number(value);
   }
+
   refreshInfo();
 }
 
 document.querySelectorAll('[data-group]').forEach(group => {
   const key = group.dataset.group;
-  group.addEventListener('click', e => {
-    const chip = e.target.closest('.chip');
+  group.addEventListener('click', event => {
+    const chip = event.target.closest('.chip');
     if (!chip || busy) return;
     if (key === 'dur' && chip.dataset.value === 'custom') {
-      setChip('dur', 'custom');
-      applyCustomDur(true);
+      selectChip('dur', 'custom');
+      $('durInput').focus();
+      $('durInput').select();
       return;
     }
-    setChip(key, chip.dataset.value);
+    selectChip(key, chip.dataset.value);
   });
 });
 
-//  DURASI KUSTOM 
-function applyCustomDur(commit = false) {
-  const raw = $('durInput').value.trim();
-  let v = parseFloat(raw);
+function readCustomDuration(commit) {
+  const input = $('durInput');
+  const value = Number.parseFloat(input.value);
 
-  if (!commit) {
-    if (!isNaN(v) && v > 0) state.dur = v;
-    warnDuration(!isNaN(v) ? v : NaN);
-    refreshInfo();
-    return;
+  if (Number.isFinite(value) && value > 0) {
+    state.dur = commit ? Math.round(value * 10) / 10 : value;
+    if (commit) input.value = String(state.dur);
+  } else if (commit) {
+    state.dur = 5;
+    input.value = '5';
   }
 
-  if (isNaN(v) || v <= 0) {
-    v = state.dur > 0 ? state.dur : 5;
-  }
-  v = Math.round(v * 10) / 10;
-  $('durInput').value = v;
-  state.dur = v;
-  warnDuration(v);
+  refreshDurationWarn(Number.isFinite(value) && value > 0 ? value : state.dur);
   refreshInfo();
 }
 
-function warnDuration(v) {
-  const warn = $('durWarn');
-  const over = !isNaN(v) && v > DUR_WARN_LIMIT;
-  warn.classList.toggle('show', over);
-  if (over) {
-    warn.querySelector('span').textContent =
-      `Durasi ${v} detik lebih dari ${DUR_WARN_LIMIT} detik. Render akan lama dan memakan banyak memori. Pastikan HP tetap aktif.`;
+$('durInput').addEventListener('input', () => readCustomDuration(false));
+$('durInput').addEventListener('change', () => readCustomDuration(true));
+$('durInput').addEventListener('blur', () => readCustomDuration(true));
+$('durInput').addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    $('durInput').blur();
   }
-}
-
-$('durInput').addEventListener('input', () => applyCustomDur(false));
-$('durInput').addEventListener('change', () => applyCustomDur(true));
-$('durInput').addEventListener('blur', () => applyCustomDur(true));
-$('durInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); $('durInput').blur(); }
 });
 
-//  AUDIO 
-function fmtDur(s) {
-  s = Math.round(s * 10) / 10;
-  const m = Math.floor(s / 60), r = (s - m * 60).toFixed(1);
-  return m ? `${m}:${r.padStart(4, '0')}` : `${r} dtk`;
+function formatDuration(seconds) {
+  const rounded = Math.round(seconds * 10) / 10;
+  const minutes = Math.floor(rounded / 60);
+  const rest = (rounded - minutes * 60).toFixed(1);
+  return minutes ? `${minutes}:${rest.padStart(4, '0')}` : `${rest} dtk`;
 }
 
 function refreshAudioNote() {
   if (!audio) return;
-  const vd = dims().D;
-  let msg;
-  if (audio.duration > vd + 0.05) {
-    msg = `Audio ${fmtDur(audio.duration)} lebih panjang dari video ${fmtDur(vd)}. Audio akan dipotong.`;
-  } else if (audio.duration < vd - 0.05) {
-    msg = `Audio ${fmtDur(audio.duration)} lebih pendek dari video ${fmtDur(vd)}. Aktifkan loop agar audio berulang.`;
+  const videoDuration = dims().duration;
+  let message;
+  if (audio.duration > videoDuration + 0.05) {
+    message = `Audio ${formatDuration(audio.duration)} lebih panjang dari video ${formatDuration(videoDuration)}. Audio dipotong.`;
+  } else if (audio.duration < videoDuration - 0.05) {
+    message = `Audio ${formatDuration(audio.duration)} lebih pendek dari video ${formatDuration(videoDuration)}. Aktifkan loop agar berulang.`;
   } else {
-    msg = `Durasi audio dan video sama (${fmtDur(vd)}).`;
+    message = `Durasi audio dan video sama (${formatDuration(videoDuration)}).`;
   }
-  $('loopNote').textContent = msg;
+  $('loopNote').textContent = message;
 }
 
 function renderAudio() {
-  $('audioEmpty').hidden = !!audio;
+  $('audioEmpty').hidden = Boolean(audio);
   $('audioSet').hidden = !audio;
   if (audio) {
     $('audioName').textContent = audio.name;
-    $('audioMeta').textContent = fmtDur(audio.duration);
-    $('loopAudio').checked = !!audio.loop;
+    $('audioMeta').textContent = `${formatDuration(audio.duration)} · ${formatSize(audio.size)}`;
+    $('loopAudio').checked = audio.loop;
   }
   refreshAudioNote();
 }
 
 $('pickAudio').onclick = () => $('audioFile').click();
-$('audioFile').onchange = async e => {
-  const file = e.target.files[0];
-  e.target.value = '';
+
+$('audioFile').onchange = async event => {
+  const file = event.target.files[0];
+  event.target.value = '';
   if (!file) return;
-  if (file.size > 60 * 1024 * 1024) return toast('Ukuran audio maksimal 60 MB', 'error');
-  toast('Mengunggah audio...', 'info', 'cloud-arrow-up');
+  if (file.size > 60 * 1024 * 1024) {
+    toast('Ukuran audio maksimal 60 MB', 'error');
+    return;
+  }
+
+  toast('Membaca audio…', 'info', 'hourglass_top');
   try {
-    const r = await fetch('/api/audio', {
-      method: 'POST',
-      headers: { 'Content-Type': file.type || 'audio/mpeg', 'X-Filename': encodeURIComponent(file.name) },
-      body: file,
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'gagal');
-    audio = { id: data.id, name: data.name, duration: data.duration, loop: false };
+    const buffer = await decodeAudio(file);
+    audio = { name: file.name, size: file.size, duration: buffer.duration, buffer, loop: false };
     renderAudio();
-    toast('Audio siap dipakai', 'success', 'music');
-  } catch (err) {
-    toast('Gagal unggah audio: ' + err.message, 'error');
+    toast('Audio siap dipakai', 'success', 'music_note');
+  } catch (error) {
+    toast('Audio tidak bisa dibaca: ' + error.message, 'error');
   }
 };
 
@@ -256,25 +285,28 @@ $('clearAudio').onclick = () => {
 
 $('loopAudio').onchange = () => {
   if (audio) audio.loop = $('loopAudio').checked;
+  refreshAudioNote();
 };
 
-//  TEMPLATE DROPDOWN 
-function buildTplSelect() {
-  const sel = $('tplSelect');
-  sel.innerHTML = '';
+function buildTemplateSelect() {
+  const select = $('tplSelect');
+  select.innerHTML = '';
+
   const placeholder = new Option('Pilih template…', '');
   placeholder.disabled = true;
-  sel.appendChild(placeholder);
-  ['2D', '3D'].forEach(group => {
-    const og = document.createElement('optgroup');
-    og.label = group === '2D' ? '2D — Dua dimensi' : '3D — Tiga dimensi';
+  select.appendChild(placeholder);
+
+  [['2D', '2D — dua dimensi'], ['3D', '3D — tiga dimensi']].forEach(([group, label]) => {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = label;
     Object.keys(TEMPLATES).forEach(key => {
-      const meta = TPL_META[key];
-      if (meta && meta[1] === group) og.appendChild(new Option(meta[0], key));
+      const meta = TEMPLATE_NAMES[key];
+      if (meta && meta[1] === group) optgroup.appendChild(new Option(meta[0], key));
     });
-    sel.appendChild(og);
+    select.appendChild(optgroup);
   });
-  sel.value = DEFAULT_TPL;
+
+  select.value = DEFAULT_TEMPLATE;
 }
 
 $('tplSelect').addEventListener('change', () => {
@@ -283,105 +315,180 @@ $('tplSelect').addEventListener('change', () => {
   $('code').value = TEMPLATES[key];
   propValues = {};
   syncProps(true);
-  toast(`Template "${TPL_META[key][0]}" dimuat`, 'success', 'wand-magic-sparkles');
+  toast(`Template "${TEMPLATE_NAMES[key][0]}" dimuat`, 'success', 'dashboard_customize');
 });
 
-//  PROPS 
 function parseProps(code) {
-  const m = code.match(/\/\*\s*props\s*([\s\S]*?)\*\//);
-  if (!m) return [];
+  const match = code.match(/\/\*\s*props\s*([\s\S]*?)\*\//);
+  if (!match) return [];
   try {
-    const arr = JSON.parse(m[1]);
-    return Array.isArray(arr) ? arr : null;
-  } catch { return null; }
+    const parsed = JSON.parse(match[1]);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
-function renderPropsGrid(schema) {
+function emptyState(icon, title, text) {
+  const box = document.createElement('div');
+  box.className = 'empty';
+
+  const mark = document.createElement('span');
+  mark.className = 'ms';
+  mark.setAttribute('aria-hidden', 'true');
+  mark.textContent = icon;
+
+  const heading = document.createElement('div');
+  heading.className = 'empty__title';
+  heading.textContent = title;
+
+  box.append(mark, heading);
+
+  if (text) {
+    const body = document.createElement('p');
+    body.className = 'body';
+    body.textContent = text;
+    box.appendChild(body);
+  }
+  return box;
+}
+
+function renderProps(schema) {
   const grid = $('propsGrid');
   grid.innerHTML = '';
+
   if (schema === null) {
-    grid.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i>Blok <code>/* props */</code> bukan JSON yang valid</div>';
+    grid.appendChild(emptyState(
+      'error',
+      'Blok props bukan JSON valid',
+      'Periksa tanda kutip dan koma di dalam blok /* props [...] */.',
+    ));
     return;
   }
+
   if (!schema.length) {
-    grid.innerHTML = '<div class="empty"><i class="fa-solid fa-sliders"></i>Composition ini belum punya props.<br>Tambahkan blok <code>/* props [...] */</code> di baris pertama.</div>';
+    grid.appendChild(emptyState(
+      'tune',
+      'Composition ini belum punya props',
+      'Tambahkan blok /* props [...] */ di baris pertama untuk memunculkan kontrol di sini.',
+    ));
     return;
   }
-  schema.forEach(item => {
-    const v = propValues[item.key];
+
+  schema.forEach((item, index) => {
+    const value = propValues[item.key];
+    const id = `prop-${index}`;
+    const type = item.type || 'text';
     const row = document.createElement('div');
     row.className = 'prop';
-    const label = document.createElement('label');
-    label.textContent = item.label || item.key;
-    row.appendChild(label);
 
-    let input, out = null;
-    if (item.type === 'range') {
-      input = document.createElement('input');
+    if (type === 'range') {
+      row.classList.add('prop--range');
+      const top = document.createElement('div');
+      top.className = 'prop__top';
+
+      const label = document.createElement('label');
+      label.className = 'prop__label';
+      label.htmlFor = id;
+      label.textContent = item.label || item.key;
+
+      const output = document.createElement('span');
+      output.className = 'prop__value';
+      output.textContent = String(value);
+
+      const input = document.createElement('input');
       input.type = 'range';
-      input.min = item.min; input.max = item.max; input.step = item.step || 'any';
-      input.value = v;
-      out = document.createElement('span');
-      out.className = 'val';
-      out.textContent = v;
-    } else if (item.type === 'checkbox') {
-      input = document.createElement('input');
+      input.id = id;
+      input.min = item.min ?? 0;
+      input.max = item.max ?? 1;
+      input.step = item.step ?? 'any';
+      input.value = value;
+      input.addEventListener('input', () => {
+        const next = Number.parseFloat(input.value);
+        propValues[item.key] = next;
+        output.textContent = String(next);
+      });
+
+      top.append(label, output);
+      row.append(top, input);
+    } else if (type === 'checkbox') {
+      const label = document.createElement('label');
+      label.className = 'prop__label';
+      label.htmlFor = id;
+      label.textContent = item.label || item.key;
+
+      const wrap = document.createElement('label');
+      wrap.className = 'switch';
+      const input = document.createElement('input');
       input.type = 'checkbox';
-      input.checked = !!v;
-    } else if (item.type === 'color') {
-      input = document.createElement('input');
+      input.id = id;
+      input.checked = Boolean(value);
+      input.addEventListener('change', () => {
+        propValues[item.key] = input.checked;
+      });
+      const track = document.createElement('span');
+      track.className = 'switch__track';
+      track.setAttribute('aria-hidden', 'true');
+      wrap.append(input, track);
+
+      row.append(label, wrap);
+    } else if (type === 'color') {
+      const label = document.createElement('label');
+      label.className = 'prop__label';
+      label.htmlFor = id;
+      label.textContent = item.label || item.key;
+
+      const input = document.createElement('input');
       input.type = 'color';
-      input.value = /^#[0-9a-f]{6}$/i.test(v) ? v : '#ffffff';
-    } else if (item.type === 'number') {
-      input = document.createElement('input');
-      input.type = 'number';
-      input.className = 'field';
-      input.step = item.step || 'any';
-      input.value = v;
+      input.id = id;
+      input.value = /^#[0-9a-f]{6}$/i.test(value) ? value : '#ffffff';
+      input.addEventListener('input', () => {
+        propValues[item.key] = input.value;
+      });
+
+      row.append(label, input);
     } else {
-      input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'field';
-      input.maxLength = 200;
-      input.value = v ?? '';
+      const label = document.createElement('label');
+      label.className = 'prop__label';
+      label.htmlFor = id;
+      label.textContent = item.label || item.key;
+
+      const input = document.createElement('input');
+      input.id = id;
+      input.className = 'prop__input';
+      input.type = type === 'number' ? 'number' : 'text';
+      if (type === 'number') input.step = item.step ?? 'any';
+      else input.maxLength = 200;
+      input.value = value ?? '';
+      input.addEventListener('input', () => {
+        propValues[item.key] = type === 'number' ? Number.parseFloat(input.value) : input.value;
+      });
+
+      row.append(label, input);
     }
 
-    input.addEventListener('input', () => {
-      let val;
-      if (item.type === 'checkbox') val = input.checked;
-      else if (item.type === 'range' || item.type === 'number') val = parseFloat(input.value);
-      else val = input.value;
-      propValues[item.key] = val;
-      if (out) out.textContent = val;
-    });
-
-    row.appendChild(input);
-    if (out) row.appendChild(out);
     grid.appendChild(row);
   });
 }
 
 function syncProps(force = false) {
   const schema = parseProps($('code').value);
-  const key = JSON.stringify(schema);
-  if (!force && key === schemaKey) return;
-  schemaKey = key;
-  if (schema === null) { renderPropsGrid(null); return; }
+  const signature = JSON.stringify(schema);
+  if (!force && signature === schemaSignature) return;
+  schemaSignature = signature;
+
+  if (schema === null) {
+    renderProps(null);
+    return;
+  }
+
   const next = {};
   schema.forEach(item => {
-    next[item.key] = (item.key in propValues) ? propValues[item.key] : item.value;
+    next[item.key] = item.key in propValues ? propValues[item.key] : item.value;
   });
   propValues = next;
-  renderPropsGrid(schema);
+  renderProps(schema);
 }
-
-$('resetProps').onclick = async () => {
-  const ok = await confirmBox('Kembalikan props?', 'Semua nilai props akan kembali ke default dari kode.', { icon: 'arrow-rotate-left' });
-  if (!ok) return;
-  propValues = {};
-  syncProps(true);
-  toast('Props dikembalikan ke default', 'warn', 'arrow-rotate-left');
-};
 
 let codeTimer = null;
 $('code').addEventListener('input', () => {
@@ -389,523 +496,598 @@ $('code').addEventListener('input', () => {
   codeTimer = setTimeout(() => syncProps(), 350);
 });
 
-//  PREVIEW 
+$('resetProps').onclick = async () => {
+  const confirmed = await ask({
+    title: 'Kembalikan props?',
+    text: 'Semua nilai props kembali ke default dari kode.',
+    icon: 'settings_backup_restore',
+    okText: 'Kembalikan',
+  });
+  if (!confirmed) return;
+  propValues = {};
+  syncProps(true);
+  toast('Props dikembalikan ke default', 'warn', 'settings_backup_restore');
+};
+
 function compile(code) {
   return new Function('ctx', 't', 'W', 'H', 'D', 'P', code);
 }
+
 function syncCanvas(d) {
-  if (cv.width !== d.W) cv.width = d.W;
-  if (cv.height !== d.H) cv.height = d.H;
+  if (canvas.width !== d.width) canvas.width = d.width;
+  if (canvas.height !== d.height) canvas.height = d.height;
 }
 
-$('play').onclick = () => {
-  cancelAnimationFrame(raf);
-  let fn;
-  try { fn = compile($('code').value); }
-  catch (e) { return toast('Error kompilasi: ' + e.message, 'error'); }
-  const start = performance.now();
+function stopPreview() {
+  if (previewFrame) cancelAnimationFrame(previewFrame);
+  previewFrame = null;
+  const button = $('play');
+  button.innerHTML = '<span class="ms" aria-hidden="true">play_arrow</span> Preview';
+  button.setAttribute('aria-pressed', 'false');
+}
+
+function startPreview() {
+  stopPreview();
+
+  let draw;
+  try {
+    draw = compile($('code').value);
+  } catch (error) {
+    toast('Kode tidak bisa dijalankan: ' + error.message, 'error');
+    return;
+  }
+
+  const startedAt = performance.now();
+  const button = $('play');
+  button.innerHTML = '<span class="ms" aria-hidden="true">stop</span> Hentikan preview';
+  button.setAttribute('aria-pressed', 'true');
+
   const loop = now => {
     const d = dims();
     syncCanvas(d);
-    const t = ((now - start) / 1000) % d.D;
+    const time = ((now - startedAt) / 1000) % d.duration;
     try {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      fn(ctx, t, d.W, d.H, d.D, { ...propValues });
-    } catch (e) {
-      toast('Runtime error: ' + e.message, 'error');
+      draw(ctx, time, d.width, d.height, d.duration, { ...propValues });
+    } catch (error) {
+      stopPreview();
+      toast('Runtime error: ' + error.message, 'error');
       return;
     }
-    raf = requestAnimationFrame(loop);
+    previewFrame = requestAnimationFrame(loop);
   };
-  raf = requestAnimationFrame(loop);
-  toast('Preview berjalan', 'info', 'play');
-};
 
-//  RENDER 
-function setRenderUI(on) {
-  setBusy(on);
-  $('stop').style.display = on ? '' : 'none';
-  $('renderWarn').hidden = !on;
-  $('render').classList.toggle('busy', on);
-  $('render').innerHTML = on
-    ? '<i class="fa-solid fa-spinner"></i> Rendering'
-    : '<i class="fa-solid fa-clapperboard"></i> Render';
-  $('progress').classList.toggle('show', on);
+  previewFrame = requestAnimationFrame(loop);
 }
 
-function updateProgress(done, total) {
+$('play').onclick = () => {
+  if (busy) return;
+  if (previewFrame) stopPreview();
+  else startPreview();
+};
+
+function setRenderUI(on) {
+  $('stop').hidden = !on;
+  $('renderWarn').hidden = !on;
+  $('progress').hidden = !on;
+  $('render').disabled = on;
+  $('play').disabled = on;
+  $('saveBtn').disabled = on;
+  $('pickAudio').disabled = on;
+  $('clearAudio').disabled = on;
+  $('loopAudio').disabled = on;
+  document.querySelectorAll('.chip').forEach(chip => { chip.disabled = on; });
+  $('render').innerHTML = on
+    ? '<span class="ms" aria-hidden="true">hourglass_top</span> Merender'
+    : '<span class="ms" aria-hidden="true">movie</span> Render';
+}
+
+function updateProgress(done, total, phase) {
   const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
   $('bar').style.width = pct + '%';
   $('ppct').textContent = pct + '%';
-  $('ptext').textContent = `Frame ${done} / ${total}`;
+  $('ptext').textContent = phase === 'audio' ? 'Menulis audio…' : `Frame ${done} / ${total}`;
+  $('progress').setAttribute('aria-valuenow', String(pct));
 }
 
-function fmtAgo(ms) {
-  const s = Math.round((Date.now() - ms) / 1000);
-  if (s < 60) return `${s} dtk lalu`;
-  if (s < 3600) return `${Math.round(s / 60)} mnt lalu`;
-  return new Date(ms).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+function timestamp() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function renderJobCard(jobs) {
-  const card = $('jobCard');
-  const list = $('jobList');
-  if (!jobs.length) { card.hidden = true; return; }
-  card.hidden = false;
-  list.innerHTML = '';
-  jobs.forEach(j => {
-    const el = document.createElement('div');
-    el.className = 'job-item';
-    const label = { running: 'Berjalan', done: 'Selesai', error: 'Gagal' }[j.status] || j.status;
-    const pct = j.total ? Math.min(100, Math.round((j.frames / j.total) * 100)) : 0;
-    el.innerHTML = `
-      <div class="job-top">
-        <div class="txt">
-          <div class="name"></div>
-          <div class="meta">${j.width}×${j.height} · ${j.fps} fps · ${j.duration} dtk${j.audio ? ' · audio' : ''} · ${fmtAgo(j.startedAt)}</div>
-        </div>
-        <span class="job-status ${j.status}">${label}</span>
-      </div>
-      ${j.status === 'running' ? `<div class="job-bar"><span style="width:${pct}%"></span></div>
-        <div class="job-msg">Frame ${j.frames} / ${j.total}. Jika layar mati atau browser ditutup, render bisa terhenti.</div>` : ''}
-      ${j.status === 'error' ? `<div class="job-msg"></div>` : ''}
-      <div class="job-actions">
-        ${j.status === 'done' ? `<a class="btn filled" href="${j.file}" download="${j.id}.mp4"><i class="fa-solid fa-download"></i> Unduh</a>
-          <button class="btn outlined" data-jact="gallery"><i class="fa-solid fa-photo-film"></i> Galeri</button>` : ''}
-        ${j.status !== 'running' ? `<button class="btn text" data-jact="remove"><i class="fa-solid fa-trash"></i> Hapus riwayat</button>` : ''}
-      </div>`;
-    if (j.status === 'error') el.querySelector('.job-msg').textContent = j.error || 'Render gagal';
-    el.querySelector('.name').textContent = j.name;
-    el.dataset.id = j.id;
-    list.appendChild(el);
-  });
+function showResult(record) {
+  if (resultUrl) URL.revokeObjectURL(resultUrl);
+  resultUrl = URL.createObjectURL(record.blob);
+  $('vid').src = resultUrl;
+  $('dl').href = resultUrl;
+  $('dl').download = record.name;
+  $('result').hidden = false;
 }
 
-const DISMISS_KEY = 'codevideo.dismissedJobs';
-const dismissed = new Set(JSON.parse(localStorage.getItem(DISMISS_KEY) || '[]'));
-function dismiss(id) {
-  dismissed.add(id);
-  localStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed].slice(-50)));
-}
-function recentEnough(j) {
-  return (Date.now() - (j.finishedAt || j.startedAt)) < 60 * 60 * 1000;
-}
+async function startRender() {
+  if (busy) return;
+  stopPreview();
 
-async function refreshJobs() {
+  let draw;
   try {
-    const data = await (await fetch('/api/jobs')).json();
-    const visible = data.jobs.filter(j =>
-      j.status === 'running' || (!dismissed.has(j.id) && recentEnough(j)));
-    renderJobCard(visible);
-    updateLiveRender(data);
-  } catch {}
-}
-
-let watchTimer = null;
-function updateLiveRender(data) {
-  const running = data.jobs.find(j => j.status === 'running');
-  if (running && !busy) {
-    setRenderUI(true);
-    $('stop').style.display = 'none';
-    $('ptext').textContent = 'Render berjalan di server';
-    updateProgress(running.frames, running.total);
-    $('renderWarn').querySelector('span').textContent =
-      'Render sedang berjalan di server. Jangan tutup aplikasi ini hingga selesai.';
-    $('render').disabled = true;
-    $('play').disabled = true;
-  } else if (!running && !busy) {
-    if (document.querySelector('.page.active').id === 'page-render') {
-      setRenderUI(false);
-    }
-    $('renderWarn').querySelector('span').textContent =
-      'Jangan tutup atau tinggalkan aplikasi ini saat render berlangsung. Layar sebaiknya tetap menyala.';
+    draw = compile($('code').value);
+  } catch (error) {
+    toast('Kode tidak bisa dijalankan: ' + error.message, 'error');
+    return;
   }
-  if (running) {
-    if (!watchTimer) watchTimer = setInterval(refreshJobs, 2000);
-  } else if (watchTimer) {
-    clearInterval(watchTimer);
-    watchTimer = null;
+
+  const info = engineInfo();
+  if (info.mode === 'none') {
+    toast(info.detail, 'error');
+    return;
   }
-}
-
-$('hideJob').onclick = () => {
-  document.querySelectorAll('.job-item').forEach(el => {
-    if (!el.querySelector('.job-status.running')) dismiss(el.dataset.id);
-  });
-  refreshJobs();
-};
-
-$('jobList').addEventListener('click', async e => {
-  const btn = e.target.closest('[data-jact]');
-  if (!btn) return;
-  const el = btn.closest('.job-item');
-  const id = el.dataset.id;
-  if (btn.dataset.jact === 'gallery') return showTab('gallery');
-  if (btn.dataset.jact === 'remove') {
-    dismiss(id);
-    await fetch('/api/jobs/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {});
-    refreshJobs();
-  }
-});
-
-window.addEventListener('beforeunload', e => {
-  if (busy) { e.preventDefault(); e.returnValue = ''; }
-});
-
-$('stop').onclick = () => { abortRender = true; };
-
-$('render').onclick = async () => {
-  cancelAnimationFrame(raf);
-  let fn;
-  try { fn = compile($('code').value); }
-  catch (e) { return toast('Error kompilasi: ' + e.message, 'error'); }
 
   const d = dims();
-  const total = Math.round(d.D * d.fps);
-  const props = { ...propValues };
+  const total = Math.max(1, Math.round(d.duration * d.fps));
   syncCanvas(d);
 
-  setBusy(true);
-  abortRender = false;
+  busy = true;
+  renderController = new AbortController();
   setRenderUI(true);
-  $('renderWarn').querySelector('span').textContent =
-    'Jangan tutup atau tinggalkan aplikasi ini saat render berlangsung. Layar sebaiknya tetap menyala.';
-  $('ptext').textContent = 'Memulai encoder...';
-  $('ppct').textContent = '0%';
-  $('bar').style.width = '0%';
-  $('result').classList.remove('show');
+  updateProgress(0, total, 'video');
+  $('ptext').textContent = 'Menyiapkan encoder…';
+  $('result').hidden = true;
 
-  let started = false;
   try {
-    const s = await fetch('/api/start', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        width: d.W, height: d.H, fps: d.fps, duration: d.D,
-        quality: state.quality,
-        audio: audio ? { id: audio.id, name: audio.name, loop: audio.loop } : null,
-      })
+    const result = await renderComposition({
+      draw,
+      props: { ...propValues },
+      width: d.width,
+      height: d.height,
+      fps: d.fps,
+      duration: d.duration,
+      quality: state.quality,
+      canvas,
+      audio: audio?.buffer ? { buffer: audio.buffer, loop: audio.loop } : null,
+      signal: renderController.signal,
+      onProgress: updateProgress,
     });
-    const sd = await s.json();
-    if (!s.ok) throw new Error(sd.error || 'gagal memulai');
-    started = true;
-    refreshJobs();
 
-    for (let i = 0; i < total; i++) {
-      if (abortRender) throw new Error('Dihentikan pengguna');
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      fn(ctx, i / d.fps, d.W, d.H, d.D, props);
-      const buf = ctx.getImageData(0, 0, d.W, d.H).data.buffer;
-      const r = await fetch('/api/frame', { method: 'POST', body: buf });
-      if (!r.ok) throw new Error((await r.json()).error || 'frame gagal');
-      if (i % 5 === 0 || i === total - 1) updateProgress(i + 1, total);
+    const record = {
+      name: `codevideo-${timestamp()}.${result.ext}`,
+      blob: result.blob,
+      mime: result.mime,
+      size: result.blob.size,
+    };
+
+    showResult(record);
+
+    try {
+      await saveVideo({ name: record.name, blob: record.blob });
+      toast(`${result.mode === 'mp4' ? 'MP4' : 'WebM'} selesai dan tersimpan di server`, 'success');
+    } catch (error) {
+      toast(`Video selesai, tapi gagal disimpan ke server: ${error.message}. Pakai tombol Unduh di bawah.`, 'warn', 'cloud_off');
     }
-
-    $('ptext').textContent = 'Menyelesaikan encoding...';
-    const res = await fetch('/api/finish', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'FFmpeg gagal');
-
-    $('ptext').textContent = 'Selesai';
-    $('vid').src = data.file;
-    $('dl').href = data.file;
-    $('dl').download = data.name;
-    $('result').classList.add('show');
-    toast('Video berhasil dirender', 'success');
-  } catch (e) {
-    if (started) fetch('/api/abort', { method: 'POST' }).catch(() => {});
-    $('ptext').textContent = 'Gagal';
-    toast('Render gagal: ' + e.message.slice(-200), 'error');
+  } catch (error) {
+    if (error.name === 'AbortError') toast('Render dihentikan', 'warn', 'stop_circle');
+    else toast('Render gagal: ' + error.message, 'error');
   } finally {
-    setBusy(false);
+    busy = false;
+    renderController = null;
     setRenderUI(false);
-    refreshJobs();
   }
-};
-
-//  GALERI 
-async function loadConfig() {
-  try {
-    const c = await (await fetch('/api/config')).json();
-    defaultDest = c.defaultDest;
-  } catch {}
 }
 
-function fmtSize(b) {
-  return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+$('render').onclick = startRender;
+$('stop').onclick = () => renderController?.abort();
+
+window.addEventListener('beforeunload', event => {
+  if (!busy) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+
+function formatSize(bytes) {
+  return bytes > 1048576
+    ? `${(bytes / 1048576).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
-function fmtDate(ms) {
+
+function formatDate(ms) {
   return new Date(ms).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function galleryCard(record) {
+  const src = videoUrl(record.name);
+
+  const card = document.createElement('article');
+  card.className = 'vid';
+
+  const video = document.createElement('video');
+  video.src = src;
+  video.controls = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+
+  const info = document.createElement('div');
+  info.className = 'vid__info';
+
+  const name = document.createElement('div');
+  name.className = 'vid__name';
+  name.textContent = record.name;
+
+  const meta = document.createElement('p');
+  meta.className = 'support';
+  const baseMeta = [formatSize(record.size), formatDate(record.mtime)];
+  meta.textContent = baseMeta.join(' · ');
+
+  video.addEventListener('loadedmetadata', () => {
+    const parts = [];
+    if (video.videoWidth && video.videoHeight) parts.push(`${video.videoWidth}×${video.videoHeight}`);
+    if (Number.isFinite(video.duration) && video.duration > 0) parts.push(formatDuration(video.duration));
+    meta.textContent = [...parts, ...baseMeta].join(' · ');
+  }, { once: true });
+
+  info.append(name, meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'vid__actions';
+
+  const download = document.createElement('a');
+  download.className = 'btn btn--text';
+  download.href = `${src}?download=1`;
+  download.download = record.name;
+  download.innerHTML = '<span class="ms" aria-hidden="true">download</span> Unduh';
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn--text is-danger';
+  remove.innerHTML = '<span class="ms" aria-hidden="true">delete</span> Hapus';
+  remove.addEventListener('click', async () => {
+    const confirmed = await ask({
+      title: 'Hapus video?',
+      text: `"${record.name}" dihapus dari folder output server.`,
+      icon: 'delete',
+      okText: 'Hapus',
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await removeVideo(record.name);
+      toast('Video dihapus', 'warn', 'delete');
+      loadGallery();
+    } catch (error) {
+      toast('Gagal menghapus: ' + error.message, 'error');
+    }
+  });
+
+  actions.append(download, remove);
+  card.append(video, info, actions);
+  return card;
 }
 
 async function loadGallery() {
   const box = $('galleryList');
-  box.innerHTML = '<div class="empty"><i class="fa-solid fa-spinner fa-spin"></i>Memuat...</div>';
-  try {
-    const list = await (await fetch('/api/videos')).json();
-    renderGallery(list);
-  } catch {
-    box.innerHTML = '<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i>Gagal memuat galeri</div>';
-  }
-}
-
-function renderGallery(list) {
-  const box = $('galleryList');
   box.innerHTML = '';
-  if (!list.length) {
-    box.innerHTML = '<div class="card empty"><i class="fa-regular fa-folder-open"></i>Belum ada video. Render dulu di tab Render.</div>';
-    return;
-  }
-  list.forEach(v => {
-    const el = document.createElement('div');
-    el.className = 'vid';
-    el.innerHTML = `
-      <video src="/output/${v.name}" controls playsinline preload="metadata"></video>
-      <div class="vid-info">
-        <div class="name"></div>
-        <div class="meta">${fmtSize(v.size)} · ${fmtDate(v.mtime)}</div>
-      </div>
-      <div class="vid-actions">
-        <a class="btn text" href="/output/${v.name}" download="${v.name}"><i class="fa-solid fa-download"></i> Unduh</a>
-        <button class="btn text" data-act="move" data-name="${v.name}"><i class="fa-solid fa-folder-open"></i> Pindah</button>
-        <button class="btn text danger-txt" data-act="del" data-name="${v.name}"><i class="fa-solid fa-trash"></i> Hapus</button>
-      </div>`;
-    el.querySelector('.name').textContent = v.name;
-    box.appendChild(el);
-  });
-}
+  box.appendChild(emptyState('hourglass_top', 'Memuat video…'));
 
-$('galleryList').addEventListener('click', async e => {
-  const btn = e.target.closest('[data-act]');
-  if (!btn) return;
-  const name = btn.dataset.name;
+  try {
+    const videos = await listVideos();
+    box.innerHTML = '';
+    $('galleryCount').textContent = videos.length
+      ? `${videos.length} video di folder output server.`
+      : 'Belum ada video. Hasil render muncul di sini.';
 
-  if (btn.dataset.act === 'move') {
-    const dest = await confirmBox(
-      'Pindahkan video',
-      'Video akan disalin ke folder berikut lalu dihapus dari aplikasi. Folder harus berada di dalam ~/storage.',
-      { icon: 'folder-open', okText: 'Pindahkan', okClass: 'primary',
-        input: { value: defaultDest, placeholder: 'Path folder tujuan' } }
+    if (!videos.length) {
+      box.appendChild(emptyState(
+        'movie',
+        'Belum ada video',
+        'Buka tab Render, lalu tekan Render untuk membuat video pertama.',
+      ));
+      return;
+    }
+
+    videos.forEach(record => box.appendChild(galleryCard(record)));
+  } catch {
+    box.innerHTML = '';
+    const state = emptyState(
+      'cloud_off',
+      'Server tidak menjawab',
+      'Jalankan node server.js, lalu coba lagi. Galeri dibaca dari folder output server.',
     );
-    if (!dest) return;
-    btn.disabled = true;
-    try {
-      const r = await fetch(`/api/videos/${encodeURIComponent(name)}/move`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dest })
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'gagal');
-      toast('Video dipindahkan ke ' + data.path, 'success', 'folder-open');
-      loadGallery();
-    } catch (err) {
-      toast('Gagal memindahkan: ' + err.message, 'error');
-      btn.disabled = false;
-    }
-  }
-
-  if (btn.dataset.act === 'del') {
-    const ok = await confirmBox('Hapus video?', `"${name}" akan dihapus permanen dari aplikasi.`,
-      { icon: 'trash', kind: 'danger', okText: 'Hapus', okClass: 'danger' });
-    if (!ok) return;
-    try {
-      const r = await fetch(`/api/videos/${encodeURIComponent(name)}`, { method: 'DELETE' });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'gagal');
-      toast('Video dihapus', 'warn', 'trash');
-      loadGallery();
-    } catch (err) {
-      toast('Gagal menghapus: ' + err.message, 'error');
-    }
-  }
-});
-
-$('refreshGallery').onclick = loadGallery;
-
-//  DOKUMENTASI 
-let docsText = '';
-async function loadDocs() {
-  if (docsText) return;
-  try {
-    docsText = await (await fetch('/docs.md')).text();
-    renderDocs(docsText);
-  } catch {
-    $('docView').textContent = 'Gagal memuat dokumentasi.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn--tonal';
+    retry.innerHTML = '<span class="ms" aria-hidden="true">refresh</span> Coba lagi';
+    retry.addEventListener('click', loadGallery);
+    state.appendChild(retry);
+    box.appendChild(state);
   }
 }
 
-function renderDocs(md) {
-  const view = $('docView');
-  if (window.marked) {
-    view.innerHTML = marked.parse(md, { gfm: true });
-  } else {
-    // Fallback jika CDN marked tidak termuat: tampilkan teks mentah
-    view.textContent = md;
+function readSaved() {
+  try {
+    return JSON.parse(localStorage.getItem(SAVED_KEY)) || [];
+  } catch {
+    return [];
   }
 }
 
-$('copyDocs').onclick = async () => {
-  if (!docsText) await loadDocs();
+function writeSaved(list) {
   try {
-    await navigator.clipboard.writeText(docsText);
+    localStorage.setItem(SAVED_KEY, JSON.stringify(list));
+    return true;
   } catch {
-    const ta = document.createElement('textarea');
-    ta.value = docsText; document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); ta.remove();
+    return false;
   }
-  toast('Markdown dokumentasi disalin', 'success', 'copy');
-};
-
-//  RESET / EKSPOR / IMPOR 
-$('reset').onclick = async () => {
-  const ok = await confirmBox('Reset kode?', 'Kode saat ini akan diganti dengan template awal. Perubahanmu akan hilang.', { icon: 'rotate-left' });
-  if (!ok) return;
-  $('code').value = DEFAULT_CODE;
-  buildTplSelect();
-  propValues = {};
-  syncProps(true);
-  toast('Kode dikembalikan ke template awal', 'warn', 'rotate-left');
-};
-
-function download(name, text) {
-  const blob = new Blob([text], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function currentSettings() {
-  return { size: state.size, ratio: state.ratio, fps: state.fps, dur: state.dur, quality: state.quality, props: { ...propValues } };
+  return {
+    size: state.size,
+    ratio: state.ratio,
+    fps: state.fps,
+    dur: state.dur,
+    quality: state.quality,
+    props: { ...propValues },
+  };
 }
 
-$('exportBtn').onclick = () => {
-  const payload = { app: 'code-video', version: 2, code: $('code').value, settings: currentSettings() };
-  const name = (($('saveName').value || 'komposisi').trim().replace(/[^\w\- ]+/g, '') || 'komposisi') + '.json';
-  download(name, JSON.stringify(payload, null, 2));
-  toast('File .json diunduh', 'success', 'file-export');
-};
+function loadComposition(entry) {
+  $('code').value = entry.code;
+  const settings = entry.settings || {};
+  propValues = settings.props && typeof settings.props === 'object' ? { ...settings.props } : {};
 
-$('importBtn').onclick = () => $('importFile').click();
-$('importFile').onchange = async e => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    const obj = JSON.parse(await file.text());
-    if (typeof obj.code !== 'string') throw new Error('format tidak valid');
-    loadComposition(obj);
-    showTab('editor');
-    toast('Komposisi diimpor', 'success', 'file-import');
-  } catch (err) {
-    toast('Gagal impor: ' + err.message, 'error');
-  }
-};
-
-//  SIMPAN KOMPOSISI 
-function readStore() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; }
-  catch { return []; }
-}
-function writeStore(list) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); return true; }
-  catch { return false; }
-}
-
-function loadComposition(obj) {
-  $('code').value = obj.code;
-  const s = obj.settings || {};
-  propValues = (s.props && typeof s.props === 'object') ? { ...s.props } : {};
-  if (s.size) setChip('size', String(s.size));
-  if (s.ratio) setChip('ratio', s.ratio);
-  if (s.fps) setChip('fps', String(s.fps));
-  if (s.quality) setChip('quality', s.quality);
-  if (s.dur) {
-    if (['3', '5', '10'].includes(String(s.dur))) setChip('dur', String(s.dur));
-    else {
-      setChip('dur', 'custom');
-      $('durInput').value = s.dur;
-      applyCustomDur(true);
+  if (settings.size) selectChip('size', String(settings.size));
+  if (settings.ratio) selectChip('ratio', settings.ratio);
+  if (settings.fps) selectChip('fps', String(settings.fps));
+  if (settings.quality) selectChip('quality', settings.quality);
+  if (settings.dur) {
+    if (['3', '5', '10'].includes(String(settings.dur))) {
+      selectChip('dur', String(settings.dur));
+    } else {
+      selectChip('dur', 'custom');
+      $('durInput').value = settings.dur;
+      readCustomDuration(true);
     }
   }
+
   $('tplSelect').value = '';
   syncProps(true);
 }
 
 function renderSaved() {
-  const list = readStore();
+  const list = readSaved();
   const box = $('savedList');
   box.innerHTML = '';
+
   if (!list.length) {
-    box.innerHTML = '<div class="empty"><i class="fa-regular fa-folder-open"></i>Belum ada komposisi tersimpan</div>';
+    box.appendChild(emptyState(
+      'bookmark',
+      'Belum ada composition tersimpan',
+      'Simpan dari tab ini agar bisa dibuka lagi tanpa menempel ulang kode.',
+    ));
     return;
   }
-  list.forEach((item, idx) => {
-    const st = item.settings || {};
-    const el = document.createElement('div');
-    el.className = 'saved-row';
-    el.innerHTML = `
-      <div class="txt">
-        <div class="name"></div>
-        <div class="meta">${st.size}p · ${st.ratio} · ${st.fps} fps · ${st.dur} dtk · ${QUALITY_LABEL[st.quality] || 'Medium'}</div>
-      </div>
-      <button class="icon-btn" data-act="load" title="Muat"><i class="fa-solid fa-folder-open"></i></button>
-      <button class="icon-btn" data-act="rename" title="Ubah nama"><i class="fa-solid fa-pen"></i></button>
-      <button class="icon-btn danger" data-act="del" title="Hapus"><i class="fa-solid fa-trash"></i></button>`;
-    el.querySelector('.name').textContent = item.name;
-    el.addEventListener('click', async e => {
-      const btn = e.target.closest('[data-act]');
-      if (!btn) return;
-      const act = btn.dataset.act;
-      if (act === 'load') {
-        loadComposition(item);
-        showTab('editor');
-        toast(`"${item.name}" dimuat`, 'success', 'folder-open');
-      } else if (act === 'rename') {
-        const n = await confirmBox('Ubah nama', 'Masukkan nama baru untuk komposisi ini.',
-          { icon: 'pen', okText: 'Simpan', input: { value: item.name } });
-        if (!n) return;
-        const l = readStore(); l[idx].name = n.slice(0, 60);
-        writeStore(l); renderSaved();
-        toast('Nama diubah', 'success');
-      } else if (act === 'del') {
-        const ok = await confirmBox('Hapus komposisi?', `"${item.name}" akan dihapus permanen dari perangkat ini.`,
-          { icon: 'trash', kind: 'danger', okText: 'Hapus', okClass: 'danger' });
-        if (!ok) return;
-        const l = readStore(); l.splice(idx, 1);
-        writeStore(l); renderSaved();
-        toast('Komposisi dihapus', 'warn', 'trash');
-      }
+
+  list.forEach((entry, index) => {
+    const settings = entry.settings || {};
+    const row = document.createElement('div');
+    row.className = 'saved-row';
+
+    const text = document.createElement('div');
+    text.className = 'saved-row__text';
+    const name = document.createElement('div');
+    name.className = 'saved-row__name';
+    name.textContent = entry.name;
+    const meta = document.createElement('p');
+    meta.className = 'support';
+    meta.textContent = [
+      `${settings.size}p`,
+      settings.ratio,
+      `${settings.fps} fps`,
+      formatDuration(settings.dur || 0),
+      QUALITY_LABEL[settings.quality] || 'Medium',
+    ].filter(Boolean).join(' · ');
+    text.append(name, meta);
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'icon-btn';
+    open.title = 'Muat';
+    open.setAttribute('aria-label', `Muat ${entry.name}`);
+    open.innerHTML = '<span class="ms" aria-hidden="true">folder_open</span>';
+    open.addEventListener('click', () => {
+      loadComposition(entry);
+      location.hash = '#editor';
+      toast(`"${entry.name}" dimuat`, 'success', 'folder_open');
     });
-    box.appendChild(el);
+
+    const rename = document.createElement('button');
+    rename.type = 'button';
+    rename.className = 'icon-btn';
+    rename.title = 'Ubah nama';
+    rename.setAttribute('aria-label', `Ubah nama ${entry.name}`);
+    rename.innerHTML = '<span class="ms" aria-hidden="true">edit</span>';
+    rename.addEventListener('click', async () => {
+      const next = await ask({
+        title: 'Ubah nama',
+        text: 'Nama baru untuk composition ini.',
+        icon: 'edit',
+        okText: 'Simpan',
+        input: { value: entry.name, label: 'Nama composition' },
+      });
+      if (!next) return;
+      const updated = readSaved();
+      updated[index].name = next.slice(0, 60);
+      writeSaved(updated);
+      renderSaved();
+      toast('Nama diubah', 'success');
+    });
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-btn icon-btn--error';
+    remove.title = 'Hapus';
+    remove.setAttribute('aria-label', `Hapus ${entry.name}`);
+    remove.innerHTML = '<span class="ms" aria-hidden="true">delete</span>';
+    remove.addEventListener('click', async () => {
+      const confirmed = await ask({
+        title: 'Hapus composition?',
+        text: `"${entry.name}" dihapus dari browser ini.`,
+        icon: 'delete',
+        okText: 'Hapus',
+        danger: true,
+      });
+      if (!confirmed) return;
+      const updated = readSaved();
+      updated.splice(index, 1);
+      writeSaved(updated);
+      renderSaved();
+      toast('Composition dihapus', 'warn', 'delete');
+    });
+
+    row.append(text, open, rename, remove);
+    box.appendChild(row);
   });
 }
 
 $('saveBtn').onclick = () => {
   const name = $('saveName').value.trim().slice(0, 60);
-  if (!name) return toast('Isi nama komposisi dulu', 'warn', 'pen');
+  if (!name) {
+    toast('Isi nama composition dulu', 'warn', 'edit');
+    return;
+  }
+
   const entry = { name, code: $('code').value, settings: currentSettings(), savedAt: Date.now() };
-  const list = readStore();
-  const existing = list.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
-  if (existing >= 0) list[existing] = entry; else list.unshift(entry);
-  if (!writeStore(list)) return toast('Penyimpanan penuh atau diblokir', 'error');
+  const list = readSaved();
+  const existing = list.findIndex(item => item.name.toLowerCase() === name.toLowerCase());
+  if (existing >= 0) list[existing] = entry;
+  else list.unshift(entry);
+
+  if (!writeSaved(list)) {
+    toast('Penyimpanan browser penuh atau diblokir', 'error');
+    return;
+  }
+
   $('saveName').value = '';
   renderSaved();
-  toast(existing >= 0 ? 'Komposisi diperbarui' : 'Komposisi disimpan', 'success', 'floppy-disk');
+  toast(existing >= 0 ? 'Composition diperbarui' : 'Composition disimpan', 'success', 'save');
 };
 
-//  INIT 
-buildTplSelect();
+$('reset').onclick = async () => {
+  const confirmed = await ask({
+    title: 'Reset kode?',
+    text: 'Kode saat ini diganti dengan template awal. Perubahanmu hilang.',
+    icon: 'restart_alt',
+    okText: 'Reset',
+    danger: true,
+  });
+  if (!confirmed) return;
+  $('code').value = DEFAULT_CODE;
+  buildTemplateSelect();
+  propValues = {};
+  syncProps(true);
+  toast('Kode dikembalikan ke template awal', 'warn', 'restart_alt');
+};
+
+function downloadJson(name, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+$('exportBtn').onclick = () => {
+  const payload = { app: 'code-video', version: 2, code: $('code').value, settings: currentSettings() };
+  const base = ($('saveName').value || 'komposisi').trim().replace(/[^\w\- ]+/g, '') || 'komposisi';
+  downloadJson(`${base}.json`, JSON.stringify(payload, null, 2));
+  toast('File .json diunduh', 'success', 'file_download');
+};
+
+$('importBtn').onclick = () => $('importFile').click();
+
+$('importFile').onchange = async event => {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (typeof parsed.code !== 'string') throw new Error('tidak ada field code');
+    loadComposition(parsed);
+    location.hash = '#editor';
+    toast('Composition diimpor', 'success', 'file_upload');
+  } catch (error) {
+    toast('Impor gagal: ' + error.message, 'error');
+  }
+};
+
+let docsText = '';
+
+async function loadDocs() {
+  if (docsText) {
+    renderDocs(docsText);
+    return;
+  }
+  try {
+    const response = await fetch('docs.md');
+    if (!response.ok) throw new Error(String(response.status));
+    docsText = await response.text();
+    renderDocs(docsText);
+  } catch {
+    $('docView').textContent = 'Dokumentasi tidak bisa dimuat. Pastikan docs.md ada di folder yang sama.';
+  }
+}
+
+function renderDocs(markdown) {
+  const view = $('docView');
+  if (window.marked && typeof window.marked.parse === 'function') {
+    view.innerHTML = window.marked.parse(markdown, { gfm: true });
+  } else {
+    view.textContent = markdown;
+  }
+}
+
+$('copyDocs').onclick = async () => {
+  if (!docsText) await loadDocs();
+  if (!docsText) return;
+  try {
+    await navigator.clipboard.writeText(docsText);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = docsText;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+  toast('Markdown dokumentasi disalin', 'success', 'content_copy');
+};
+
+const engine = engineInfo();
+$('engine').textContent = engine.label;
+$('engine').title = engine.detail;
+$('engineNote').textContent = engine.detail;
+if (engine.mode === 'none') {
+  $('engine').style.color = 'var(--error)';
+}
+
+buildTemplateSelect();
 $('code').value = DEFAULT_CODE;
 syncProps(true);
-refreshInfo();
+selectChip('size', String(state.size));
+selectChip('ratio', state.ratio);
+selectChip('fps', String(state.fps));
+selectChip('quality', state.quality);
+selectChip('dur', String(state.dur));
 renderAudio();
-loadConfig();
 renderSaved();
-refreshJobs();
+$('play').setAttribute('aria-pressed', 'false');
+showTab();
+
+window.addEventListener('hashchange', showTab);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }

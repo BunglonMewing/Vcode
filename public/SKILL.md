@@ -1,6 +1,6 @@
 ---
 name: codevideo-composition
-description: Write JavaScript canvas 2D compositions for the Code → Video app, which renders canvas code to MP4 with FFmpeg. Use when the user asks for a composition, animation, or video code for Code → Video, or asks to recreate a reference image, poster, or design as an animated video in this app.
+description: Write JavaScript canvas 2D compositions for the Code → Video app, which encodes canvas code to MP4 in the browser. Use when the user asks for a composition, animation, or video code for Code → Video, or asks to recreate a reference image, poster, or design as an animated video in this app.
 ---
 
 # Code → Video Composition Skill
@@ -21,7 +21,7 @@ new Function('ctx', 't', 'W', 'H', 'D', 'P', code)
 
 - **Preview**: `t` mengikuti waktu nyata dan berulang setiap `D` detik.
 - **Render**: untuk setiap frame `i`, aplikasi memanggil fungsi dengan `t = i / fps`,
-  lalu mengambil piksel dengan `getImageData` dan mengirimnya ke FFmpeg.
+  lalu mengambil canvas sebagai `VideoFrame` dan mengirimkannya ke encoder browser.
   Frame terakhir memiliki `t = (total - 1) / fps`, yaitu selalu kurang dari `D`.
 - Sebelum setiap pemanggilan, aplikasi memanggil `ctx.setTransform(1, 0, 0, 1, 0, 0)`.
   Transformasi tidak perlu di-reset manual di awal composition.

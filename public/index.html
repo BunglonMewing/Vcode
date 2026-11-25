@@ -3,263 +3,296 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#141218">
+<meta name="theme-color" content="#FEF7FF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141218" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Tulis composition JavaScript, lihat preview, lalu render MP4 langsung di browser tanpa server.">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="CodeVideo">
 <title>Code → Video</title>
-<link rel="manifest" href="/manifest.json">
-<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-<link rel="apple-touch-icon" href="/icons/icon-192.png">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header class="appbar">
-  <h1 id="pageTitle">Editor</h1>
-</header>
+<a class="skip-link" href="#main">Lompat ke konten</a>
 
-<main>
-
-  <!-- EDITOR -->
-  <section class="page active" id="page-editor">
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-shapes"></i> Template</div>
-      <div class="select-wrap">
-        <select id="tplSelect" class="field"></select>
-        <i class="fa-solid fa-chevron-down"></i>
-      </div>
-      <p class="note">Pilih template untuk mengisi kode. Kode bisa diedit setelahnya.</p>
-    </div>
-
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-code"></i> Composition</div>
-      <textarea id="code" spellcheck="false"></textarea>
-      <div class="row-actions">
-        <button class="btn outlined" id="reset"><i class="fa-solid fa-rotate-left"></i> Reset</button>
-        <button class="btn outlined" id="exportBtn"><i class="fa-solid fa-file-export"></i> Ekspor</button>
-        <button class="btn outlined" id="importBtn"><i class="fa-solid fa-file-import"></i> Impor</button>
-        <input type="file" id="importFile" accept=".json,application/json" hidden>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-sliders"></i> Props</div>
-        <button class="btn text" id="resetProps"><i class="fa-solid fa-arrow-rotate-left"></i> Default</button>
-      </div>
-      <div id="propsGrid"></div>
-    </div>
-  </section>
-
-  <!-- RENDER -->
-  <section class="page" id="page-render">
-
-    <!-- Riwayat render: hanya tampil saat ada render berjalan atau baru selesai -->
-    <div class="card job-card" id="jobCard" hidden>
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Riwayat render</div>
-        <button class="btn text" id="hideJob"><i class="fa-solid fa-xmark"></i> Tutup</button>
-      </div>
-      <div id="jobList"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-eye"></i> Preview</div>
-      <div class="stage"><canvas id="cv" width="720" height="720"></canvas></div>
-      <div class="actions">
-        <button id="play" class="btn tonal lg"><i class="fa-solid fa-play"></i> Preview</button>
-        <button id="render" class="btn filled lg"><i class="fa-solid fa-clapperboard"></i> Render</button>
-        <button id="stop" class="btn danger lg" style="display:none"><i class="fa-solid fa-stop"></i> Stop</button>
-      </div>
-
-      <div class="warn-banner" id="renderWarn" hidden>
-        <i class="fa-solid fa-hand"></i>
-        <span>Jangan tutup atau tinggalkan aplikasi ini saat render berlangsung. Layar sebaiknya tetap menyala.</span>
-      </div>
-
-      <div class="progress" id="progress">
-        <div class="bar"><span id="bar"></span></div>
-        <div class="progress-text"><span id="ptext">Menyiapkan...</span><span id="ppct">0%</span></div>
-      </div>
-      <div class="result" id="result">
-        <video id="vid" controls playsinline></video>
-        <div class="row-actions">
-          <a id="dl" class="btn filled" download><i class="fa-solid fa-download"></i> Unduh</a>
-          <button id="toGallery" class="btn outlined"><i class="fa-solid fa-photo-film"></i> Galeri</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-music"></i> Audio <span class="opt">(opsional)</span></div>
-      <input type="file" id="audioFile" accept="audio/*" hidden>
-      <div id="audioEmpty">
-        <button class="btn outlined" id="pickAudio"><i class="fa-solid fa-file-audio"></i> Pilih audio</button>
-        <p class="note">Format mp3, wav, m4a, ogg. Maks 60 MB.</p>
-      </div>
-      <div id="audioSet" hidden>
-        <div class="audio-row">
-          <i class="fa-solid fa-compact-disc"></i>
-          <div class="txt">
-            <div class="name" id="audioName"></div>
-            <div class="meta" id="audioMeta"></div>
-          </div>
-          <button class="icon-btn danger" id="clearAudio" title="Hapus audio"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="loop-row">
-          <div>
-            <div class="loop-title">Loop audio</div>
-            <div class="note" id="loopNote"></div>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="loopAudio">
-            <span></span>
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-gear"></i> Pengaturan Render</div>
-
-      <div class="group">
-        <div class="label">Resolusi (sisi terpanjang)</div>
-        <div class="chips" data-group="size">
-          <button class="chip" data-value="480">480p</button>
-          <button class="chip active" data-value="720">720p</button>
-          <button class="chip" data-value="1080">1080p</button>
-          <button class="chip" data-value="1440">1440p</button>
-          <button class="chip" data-value="2160">2160p</button>
-        </div>
-        <div class="hint" id="hint"><i class="fa-solid fa-triangle-exclamation"></i> <span></span></div>
-      </div>
-
-      <div class="group">
-        <div class="label">Rasio aspek</div>
-        <div class="chips" data-group="ratio">
-          <button class="chip active" data-value="1:1">1:1</button>
-          <button class="chip" data-value="16:9">16:9</button>
-          <button class="chip" data-value="9:16">9:16</button>
-          <button class="chip" data-value="4:5">4:5</button>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="label">Kualitas</div>
-        <div class="chips" data-group="quality">
-          <button class="chip" data-value="low">Low</button>
-          <button class="chip active" data-value="medium">Medium</button>
-          <button class="chip" data-value="high">High</button>
-          <button class="chip" data-value="ultra">Ultra</button>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="label">FPS</div>
-        <div class="chips" data-group="fps">
-          <button class="chip" data-value="24">24</button>
-          <button class="chip active" data-value="30">30</button>
-          <button class="chip" data-value="60">60</button>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="label">Durasi</div>
-        <div class="chips" data-group="dur">
-          <button class="chip" data-value="3">3 detik</button>
-          <button class="chip active" data-value="5">5 detik</button>
-          <button class="chip" data-value="10">10 detik</button>
-          <button class="chip" data-value="custom"><i class="fa-solid fa-pen"></i> Kustom</button>
-        </div>
-        <div class="custom-dur" id="customRow" style="display:none">
-          <input type="number" id="durInput" class="field" min="0.1" step="0.1" placeholder="detik" value="30">
-          <span>detik</span>
-        </div>
-        <div class="hint" id="durWarn">
-          <i class="fa-solid fa-triangle-exclamation"></i> <span></span>
-        </div>
-      </div>
-
-      <div class="info">
-        <span><b id="dims">720×720</b></span>
-        <span><b id="frames">150</b> frame</span>
-        <span><b id="qLabel">Medium</b></span>
-      </div>
-    </div>
-  </section>
-
-  <!-- GALERI -->
-  <section class="page" id="page-gallery">
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-photo-film"></i> Galeri</div>
-        <button class="btn text" id="refreshGallery"><i class="fa-solid fa-arrows-rotate"></i> Muat ulang</button>
-      </div>
-      <p class="note">Video di aplikasi bisa dipindahkan ke penyimpanan HP (Movies/CodeVideo) agar muncul di galeri perangkat.</p>
-    </div>
-    <div id="galleryList" class="gallery"></div>
-  </section>
-
-  <!-- TERSIMPAN -->
-  <section class="page" id="page-saved">
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-floppy-disk"></i> Simpan komposisi</div>
-      <div class="save-row">
-        <input id="saveName" class="field" placeholder="Nama komposisi" maxlength="60">
-        <button class="btn filled" id="saveBtn"><i class="fa-solid fa-floppy-disk"></i> Simpan</button>
-      </div>
-      <p class="note">Tersimpan di browser perangkat ini. Gunakan Ekspor untuk memindahkannya.</p>
-    </div>
-    <div class="card">
-      <div class="card-title"><i class="fa-solid fa-list"></i> Daftar tersimpan</div>
-      <div id="savedList"></div>
-    </div>
-  </section>
-
-  <!-- DOKUMENTASI -->
-  <section class="page" id="page-docs">
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-book"></i> Dokumentasi</div>
-      </div>
-      <p class="note">Baca dokumentasi di bawah. Salin teks Markdown atau unduh SKILL.md untuk dipakai sebagai skill oleh AI agent.</p>
-      <div class="row-actions">
-        <button class="btn outlined" id="copyDocs"><i class="fa-solid fa-copy"></i> Salin Markdown</button>
-        <a class="btn filled" href="/SKILL.md" download="SKILL.md"><i class="fa-solid fa-download"></i> Unduh SKILL.md</a>
-      </div>
-      <article class="md" id="docView">Memuat dokumentasi...</article>
-    </div>
-  </section>
-
-</main>
-
-<nav class="bottomnav" role="tablist">
-  <button class="nav-item active" data-tab="editor"><span class="ind"><i class="fa-solid fa-code"></i></span><span>Editor</span></button>
-  <button class="nav-item" data-tab="render"><span class="ind"><i class="fa-solid fa-clapperboard"></i></span><span>Render</span></button>
-  <button class="nav-item" data-tab="gallery"><span class="ind"><i class="fa-solid fa-photo-film"></i></span><span>Galeri</span></button>
-  <button class="nav-item" data-tab="saved"><span class="ind"><i class="fa-solid fa-floppy-disk"></i></span><span>Simpan</span></button>
-  <button class="nav-item" data-tab="docs"><span class="ind"><i class="fa-solid fa-book"></i></span><span>Docs</span></button>
-</nav>
-
-<div id="snackbars"></div>
-
-<div class="scrim" id="overlay">
-  <div class="dialog" role="dialog" aria-modal="true">
-    <div class="dlg-icon" id="mIcon"><i class="fa-solid fa-circle-info"></i></div>
-    <h2 id="mTitle"></h2>
-    <p id="mText"></p>
-    <input id="mInput" class="field" hidden>
-    <div class="dlg-actions">
-      <button class="btn text" id="mCancel">Batal</button>
-      <button class="btn text" id="mOk">OK</button>
+<header class="app-bar">
+  <div class="app-bar__lead">
+    <span class="brand-mark" aria-hidden="true"><span class="ms">movie_edit</span></span>
+    <div>
+      <p class="app-bar__brand">Code → Video</p>
+      <h1 class="app-bar__title" id="pageTitle">Editor</h1>
     </div>
   </div>
+  <span class="engine" id="engine">Memeriksa browser…</span>
+</header>
+
+<div class="shell">
+
+  <nav class="nav" aria-label="Navigasi utama">
+    <a class="nav-item" href="#editor" data-tab="editor">
+      <span class="nav-ind"><span class="ms">code</span></span>
+      <span class="nav-label">Editor</span>
+    </a>
+    <a class="nav-item" href="#render" data-tab="render">
+      <span class="nav-ind"><span class="ms">movie</span></span>
+      <span class="nav-label">Render</span>
+    </a>
+    <a class="nav-item" href="#gallery" data-tab="gallery">
+      <span class="nav-ind"><span class="ms">video_library</span></span>
+      <span class="nav-label">Galeri</span>
+    </a>
+    <a class="nav-item" href="#saved" data-tab="saved">
+      <span class="nav-ind"><span class="ms">bookmark</span></span>
+      <span class="nav-label">Simpan</span>
+    </a>
+    <a class="nav-item" href="#docs" data-tab="docs">
+      <span class="nav-ind"><span class="ms">menu_book</span></span>
+      <span class="nav-label">Docs</span>
+    </a>
+  </nav>
+
+  <main id="main">
+
+    <!-- EDITOR -->
+    <section class="page" id="page-editor" hidden>
+      <div class="card card--accent">
+        <h2 class="card__title">Render terjadi di browser</h2>
+        <p class="body">Composition digambar ke canvas, lalu di-encode menjadi video di perangkat ini. Tidak ada frame yang diunggah ke server.</p>
+      </div>
+
+      <section class="card" aria-labelledby="tplHeading">
+        <h2 class="card__title" id="tplHeading"><span class="ms" aria-hidden="true">dashboard_customize</span> Template</h2>
+        <div class="text-field text-field--static">
+          <select id="tplSelect"></select>
+          <label for="tplSelect">Template composition</label>
+          <span class="ms text-field__icon" aria-hidden="true">arrow_drop_down</span>
+        </div>
+        <p class="support">Template mengisi editor. Kode bisa diubah setelahnya.</p>
+      </section>
+
+      <section class="card" aria-labelledby="codeHeading">
+        <h2 class="card__title" id="codeHeading"><span class="ms" aria-hidden="true">code</span> Composition</h2>
+        <textarea id="code" class="code-field" spellcheck="false" aria-labelledby="codeHeading"></textarea>
+        <div class="button-row">
+          <button class="btn btn--outlined" id="reset" type="button"><span class="ms" aria-hidden="true">restart_alt</span> Reset</button>
+          <button class="btn btn--outlined" id="exportBtn" type="button"><span class="ms" aria-hidden="true">file_download</span> Ekspor</button>
+          <button class="btn btn--outlined" id="importBtn" type="button"><span class="ms" aria-hidden="true">file_upload</span> Impor</button>
+          <input type="file" id="importFile" accept=".json,application/json" hidden>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="propsHeading">
+        <div class="card__head">
+          <h2 class="card__title" id="propsHeading"><span class="ms" aria-hidden="true">tune</span> Props</h2>
+          <button class="btn btn--text" id="resetProps" type="button"><span class="ms" aria-hidden="true">settings_backup_restore</span> Default</button>
+        </div>
+        <div id="propsGrid"></div>
+      </section>
+    </section>
+
+    <!-- RENDER -->
+    <section class="page" id="page-render" hidden>
+      <section class="card" aria-labelledby="previewHeading">
+        <h2 class="card__title" id="previewHeading"><span class="ms" aria-hidden="true">preview</span> Preview</h2>
+        <div class="stage">
+          <canvas id="cv" width="720" height="720">Preview canvas tidak didukung browser ini.</canvas>
+        </div>
+
+        <div class="button-row button-row--wide">
+          <button id="play" class="btn btn--tonal" type="button"><span class="ms" aria-hidden="true">play_arrow</span> Preview</button>
+          <button id="render" class="btn btn--filled" type="button"><span class="ms" aria-hidden="true">movie</span> Render</button>
+          <button id="stop" class="btn btn--error" type="button" hidden><span class="ms" aria-hidden="true">stop</span> Hentikan</button>
+        </div>
+
+        <p class="support" id="engineNote"></p>
+
+        <div class="banner" id="renderWarn" hidden>
+          <span class="ms" aria-hidden="true">info</span>
+          <span>Biarkan tab ini tetap terbuka dan terlihat selama render. Frame digambar oleh browser ini.</span>
+        </div>
+
+        <div class="progress" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progres render" hidden>
+          <div class="progress__track"><span class="progress__bar" id="bar"></span></div>
+          <div class="progress__text"><span id="ptext">Menyiapkan encoder…</span><span id="ppct">0%</span></div>
+        </div>
+
+        <div class="result" id="result" hidden>
+          <video id="vid" controls playsinline></video>
+          <div class="button-row">
+            <a id="dl" class="btn btn--filled" download><span class="ms" aria-hidden="true">download</span> Unduh</a>
+            <a id="toGallery" class="btn btn--outlined" href="#gallery"><span class="ms" aria-hidden="true">video_library</span> Galeri</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="audioHeading">
+        <h2 class="card__title" id="audioHeading"><span class="ms" aria-hidden="true">music_note</span> Audio <span class="support support--inline">opsional</span></h2>
+        <input type="file" id="audioFile" accept="audio/*" hidden>
+        <div id="audioEmpty">
+          <button class="btn btn--outlined" id="pickAudio" type="button"><span class="ms" aria-hidden="true">audio_file</span> Pilih audio</button>
+          <p class="support">MP3, WAV, M4A, OGG, atau AAC. Maksimal 60 MB. Audio di-decode di browser.</p>
+        </div>
+        <div id="audioSet" hidden>
+          <div class="audio-row">
+            <span class="ms audio-row__icon" aria-hidden="true">graphic_eq</span>
+            <div class="audio-row__text">
+              <div class="audio-row__name" id="audioName"></div>
+              <div class="support" id="audioMeta"></div>
+            </div>
+            <button class="icon-btn icon-btn--error" id="clearAudio" type="button" title="Hapus audio" aria-label="Hapus audio"><span class="ms" aria-hidden="true">close</span></button>
+          </div>
+          <div class="switch-row">
+            <div>
+              <div class="switch-row__title">Loop audio</div>
+              <div class="support" id="loopNote"></div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="loopAudio">
+              <span class="switch__track" aria-hidden="true"></span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="settingsHeading">
+        <h2 class="card__title" id="settingsHeading"><span class="ms" aria-hidden="true">tune</span> Pengaturan render</h2>
+
+        <div class="setting">
+          <div class="setting__label">Resolusi (sisi terpanjang)</div>
+          <div class="chips" role="group" aria-label="Resolusi" data-group="size">
+            <button class="chip" type="button" data-value="480">480p</button>
+            <button class="chip" type="button" data-value="720">720p</button>
+            <button class="chip" type="button" data-value="1080">1080p</button>
+            <button class="chip" type="button" data-value="1440">1440p</button>
+            <button class="chip" type="button" data-value="2160">2160p</button>
+          </div>
+          <div class="banner" id="hint" hidden><span class="ms" aria-hidden="true">warning</span> <span></span></div>
+        </div>
+
+        <div class="setting">
+          <div class="setting__label">Rasio aspek</div>
+          <div class="chips" role="group" aria-label="Rasio aspek" data-group="ratio">
+            <button class="chip" type="button" data-value="1:1">1:1</button>
+            <button class="chip" type="button" data-value="16:9">16:9</button>
+            <button class="chip" type="button" data-value="9:16">9:16</button>
+            <button class="chip" type="button" data-value="4:5">4:5</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting__label">Kualitas</div>
+          <div class="chips" role="group" aria-label="Kualitas" data-group="quality">
+            <button class="chip" type="button" data-value="low">Low</button>
+            <button class="chip" type="button" data-value="medium">Medium</button>
+            <button class="chip" type="button" data-value="high">High</button>
+            <button class="chip" type="button" data-value="ultra">Ultra</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting__label">FPS</div>
+          <div class="chips" role="group" aria-label="FPS" data-group="fps">
+            <button class="chip" type="button" data-value="24">24</button>
+            <button class="chip" type="button" data-value="30">30</button>
+            <button class="chip" type="button" data-value="60">60</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting__label">Durasi</div>
+          <div class="chips" role="group" aria-label="Durasi" data-group="dur">
+            <button class="chip" type="button" data-value="3">3 detik</button>
+            <button class="chip" type="button" data-value="5">5 detik</button>
+            <button class="chip" type="button" data-value="10">10 detik</button>
+            <button class="chip" type="button" data-value="custom">Kustom</button>
+          </div>
+          <div class="text-field text-field--compact" id="customRow" hidden>
+            <input type="number" id="durInput" min="0.1" step="0.1" value="30" placeholder=" ">
+            <label for="durInput">Detik</label>
+          </div>
+          <div class="banner" id="durWarn" hidden><span class="ms" aria-hidden="true">warning</span> <span></span></div>
+        </div>
+
+        <dl class="summary">
+          <div><dt>Ukuran</dt><dd id="dims">720×720</dd></div>
+          <div><dt>Frame</dt><dd id="frames">150</dd></div>
+          <div><dt>Kualitas</dt><dd id="qLabel">Medium</dd></div>
+        </dl>
+      </section>
+    </section>
+
+    <!-- GALERI -->
+    <section class="page" id="page-gallery" hidden>
+      <section class="card" aria-labelledby="galleryHeading">
+        <h2 class="card__title" id="galleryHeading"><span class="ms" aria-hidden="true">video_library</span> Galeri</h2>
+        <p class="support" id="galleryCount">Video hasil render disimpan di folder <code>output/</code> pada server.</p>
+      </section>
+      <div id="galleryList" class="gallery"></div>
+    </section>
+
+    <!-- TERSIMPAN -->
+    <section class="page" id="page-saved" hidden>
+      <section class="card" aria-labelledby="saveHeading">
+        <h2 class="card__title" id="saveHeading"><span class="ms" aria-hidden="true">bookmark_add</span> Simpan composition</h2>
+        <div class="save-row">
+          <div class="text-field">
+            <input id="saveName" maxlength="60" placeholder=" ">
+            <label for="saveName">Nama composition</label>
+          </div>
+          <button class="btn btn--filled" id="saveBtn" type="button"><span class="ms" aria-hidden="true">save</span> Simpan</button>
+        </div>
+        <p class="support">Tersimpan di localStorage browser ini. Gunakan Ekspor untuk memindahkannya.</p>
+      </section>
+      <section class="card" aria-labelledby="savedHeading">
+        <h2 class="card__title" id="savedHeading"><span class="ms" aria-hidden="true">list</span> Daftar tersimpan</h2>
+        <div id="savedList"></div>
+      </section>
+    </section>
+
+    <!-- DOKUMENTASI -->
+    <section class="page" id="page-docs" hidden>
+      <section class="card" aria-labelledby="docsHeading">
+        <div class="card__head">
+          <h2 class="card__title" id="docsHeading"><span class="ms" aria-hidden="true">menu_book</span> Dokumentasi</h2>
+        </div>
+        <p class="support">Referensi penulisan composition. Salin Markdown atau unduh SKILL.md untuk dipakai sebagai skill oleh AI agent.</p>
+        <div class="button-row">
+          <button class="btn btn--outlined" id="copyDocs" type="button"><span class="ms" aria-hidden="true">content_copy</span> Salin Markdown</button>
+          <a class="btn btn--filled" href="SKILL.md" download="SKILL.md"><span class="ms" aria-hidden="true">download</span> Unduh SKILL.md</a>
+        </div>
+        <article class="md" id="docView">Memuat dokumentasi…</article>
+      </section>
+    </section>
+
+  </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="/templates.js"></script>
-<script src="/app.js"></script>
+<div id="snackbars" aria-live="polite"></div>
+
+<dialog id="dialog">
+  <form method="dialog" class="dialog">
+    <div class="dialog__icon" id="mIcon"><span class="ms">info</span></div>
+    <h2 class="dialog__title" id="mTitle"></h2>
+    <p class="dialog__text" id="mText"></p>
+    <div class="text-field dialog__field" id="mField" hidden>
+      <input id="mInput" placeholder=" ">
+      <label for="mInput" id="mLabel">Nilai</label>
+    </div>
+    <div class="dialog__actions">
+      <button class="btn btn--text" value="cancel" id="mCancel" type="submit">Batal</button>
+      <button class="btn btn--text" value="ok" id="mOk" type="submit">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

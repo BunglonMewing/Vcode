@@ -1,326 +1,244 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { spawn } = require('child_process');
+const http = require('node:http');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const path = require('node:path');
+const { Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 
-const PORT = 3000;
-const ROOT = __dirname;
-const PUB = path.join(ROOT, 'public');
-const OUT = path.join(ROOT, 'output');
-const TMP = path.join(ROOT, 'tmp');
-const JOBS_FILE = path.join(ROOT, 'jobs.json');
-const HOME = os.homedir();
-const STORAGE_ROOT = path.join(HOME, 'storage');
-const DEFAULT_DEST = path.join(STORAGE_ROOT, 'shared', 'Movies', 'CodeVideo');
-const MAX_W = 3840, MAX_H = 2160;
-const MAX_AUDIO = 60 * 1024 * 1024; // 60 MB
-fs.mkdirSync(OUT, { recursive: true });
-fs.mkdirSync(TMP, { recursive: true });
-
-const QUALITY = {
-  low:    { preset: 'ultrafast', crf: '28' },
-  medium: { preset: 'veryfast',  crf: '23' },
-  high:   { preset: 'medium',    crf: '20' },
-  ultra:  { preset: 'slow',      crf: '16' },
-};
+const ROOT = path.join(__dirname, 'public');
+const OUTPUT = path.join(__dirname, 'output');
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const MAX_UPLOAD = 250 * 1024 * 1024;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
 };
-let jobs = [];
-try { jobs = JSON.parse(fs.readFileSync(JOBS_FILE, 'utf8')); } catch {}
-// Job yang masih "running" saat server baru start berarti server sebelumnya mati
-jobs.forEach(j => { if (j.status === 'running') { j.status = 'error'; j.error = 'Server dimulai ulang saat render'; } });
 
-function saveJobs() {
-  try { fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs.slice(0, 30), null, 2)); } catch {}
-}
+fs.mkdirSync(OUTPUT, { recursive: true });
 
-let session = null; // render aktif: { job, ff, frameBytes, lastSeen, log }
-const STALE_MS = 15000; // tanpa frame selama 15 detik dianggap browser terputus
-
-setInterval(() => {
-  if (session && Date.now() - session.lastSeen > STALE_MS) {
-    failSession('Browser tidak mengirim frame (terputus / layar mati)');
-  }
-}, 3000);
-
-function failSession(msg) {
-  if (!session) return;
-  const s = session;
-  session = null;
-  s.job.status = 'error';
-  s.job.error = msg;
-  s.job.finishedAt = Date.now();
-  saveJobs();
-  try { s.ff.stdin.end(); } catch {}
-  s.ff.kill('SIGKILL');
-  if (s.audioPath) fs.rm(s.audioPath, () => {});
-}
-function json(res, code, obj) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(obj));
-}
-
-function readBody(req, raw = false, limit = 1024 * 1024 * 80) {
-  return new Promise((resolve, reject) => {
-    const chunks = []; let size = 0;
-    req.on('data', c => {
-      size += c.length;
-      if (size > limit) { req.destroy(); return reject(new Error('body terlalu besar')); }
-      chunks.push(c);
-    });
-    req.on('end', () => {
-      const b = Buffer.concat(chunks);
-      resolve(raw ? b : b.toString());
-    });
-    req.on('error', reject);
+function sendJson(res, status, body) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+    'Cache-Control': 'no-store',
   });
+  res.end(payload);
+}
+
+function sendText(res, status, text) {
+  res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(text);
+}
+
+async function sendFile(req, res, filePath, { type, downloadName = null } = {}) {
+  const stat = await fsp.stat(filePath);
+  if (!stat.isFile()) throw Object.assign(new Error('Bukan file'), { code: 'ENOENT' });
+
+  const headers = {
+    'Content-Type': type || MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes',
+    'Last-Modified': stat.mtime.toUTCString(),
+    'Cache-Control': downloadName ? 'no-store' : 'no-cache',
+  };
+  if (downloadName) {
+    const ascii = downloadName.replace(/[^\x20-\x7e]|["\\]/g, '_');
+    headers['Content-Disposition'] = `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`;
+  }
+
+  // Range support keeps seeking inside <video> working.
+  const range = req.headers.range;
+  const match = range && /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (match) {
+    let start = match[1] ? Number(match[1]) : 0;
+    let end = match[2] ? Number(match[2]) : stat.size - 1;
+    if (!match[1] && match[2]) {
+      start = Math.max(0, stat.size - Number(match[2]));
+      end = stat.size - 1;
+    }
+    if (start > end || start >= stat.size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+      return res.end();
+    }
+    end = Math.min(end, stat.size - 1);
+    res.writeHead(206, {
+      ...headers,
+      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+      'Content-Length': end - start + 1,
+    });
+    if (req.method === 'HEAD') return res.end();
+    return createReadStreamSafe(filePath, res, { start, end });
+  }
+
+  res.writeHead(200, { ...headers, 'Content-Length': stat.size });
+  if (req.method === 'HEAD') return res.end();
+  return createReadStreamSafe(filePath, res, {});
+}
+
+function createReadStreamSafe(filePath, res, options) {
+  const stream = fs.createReadStream(filePath, options);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+}
+
+async function serveStatic(req, res, pathname) {
+  let relative = pathname;
+  try {
+    relative = decodeURIComponent(pathname);
+  } catch {
+    return sendText(res, 400, 'Path tidak valid');
+  }
+  if (relative.endsWith('/')) relative += 'index.html';
+
+  const filePath = path.resolve(ROOT, `.${relative}`);
+  if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
+    return sendText(res, 403, 'Akses ditolak');
+  }
+
+  try {
+    const stat = await fsp.stat(filePath);
+    if (stat.isDirectory()) return serveStatic(req, res, `${relative}/`);
+  } catch {
+    return sendText(res, 404, 'Tidak ditemukan');
+  }
+
+  return sendFile(req, res, filePath);
+}
+
+async function listVideos() {
+  const entries = await fsp.readdir(OUTPUT, { withFileTypes: true }).catch(() => []);
+  const files = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !/\.(mp4|webm)$/i.test(entry.name)) continue;
+    const stat = await fsp.stat(path.join(OUTPUT, entry.name)).catch(() => null);
+    if (stat) files.push({ name: entry.name, size: stat.size, mtime: stat.mtimeMs });
+  }
+  return files.sort((a, b) => b.mtime - a.mtime);
 }
 
 function safeVideoName(raw) {
-  const name = path.basename(decodeURIComponent(raw || ''));
-  return /^video-\d+\.mp4$/.test(name) ? name : null;
+  const base = String(raw || 'video').split(/[\\/]/).pop();
+  const cleaned = base.replace(/[^\w.-]+/g, '-').replace(/^[-.]+/, '').slice(0, 64) || 'video';
+  const ext = /\.webm$/i.test(cleaned) ? '.webm' : '.mp4';
+  const stem = cleaned.replace(/\.(mp4|webm)$/i, '') || 'video';
+  return `${stem}${ext}`;
 }
 
-function isAllowedDest(p) {
-  const r = path.resolve(p);
-  return r === STORAGE_ROOT || r.startsWith(STORAGE_ROOT + path.sep);
+async function uniqueName(name) {
+  const ext = path.extname(name);
+  const stem = name.slice(0, -ext.length);
+  let candidate = name;
+  for (let i = 1; i < 200; i++) {
+    try {
+      await fsp.access(path.join(OUTPUT, candidate));
+      candidate = `${stem}-${i}${ext}`;
+    } catch {
+      return candidate;
+    }
+  }
+  throw new Error('Tidak bisa membuat nama file unik');
 }
 
-function getProbe(file) {
-  return new Promise(resolve => {
-    const p = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]);
-    let out = '';
-    p.stdout.on('data', d => out += d);
-    p.on('close', () => resolve(parseFloat(out) || 0));
-    p.on('error', () => resolve(0));
+async function handleUpload(req, res) {
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > MAX_UPLOAD) return sendJson(res, 413, { error: 'File melebihi 250 MB' });
+
+  const name = await uniqueName(safeVideoName(req.headers['x-filename']));
+  const finalPath = path.join(OUTPUT, name);
+  const tempPath = `${finalPath}.part`;
+
+  let received = 0;
+  const counter = new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      if (received > MAX_UPLOAD) return callback(new Error('File melebihi 250 MB'));
+      callback(null, chunk);
+    },
   });
+
+  try {
+    await pipeline(req, counter, fs.createWriteStream(tempPath));
+    if (!received) throw new Error('Body kosong');
+    await fsp.rename(tempPath, finalPath);
+  } catch (error) {
+    await fsp.unlink(tempPath).catch(() => {});
+    return sendJson(res, error.message.includes('250 MB') ? 413 : 400, { error: error.message });
+  }
+
+  const stat = await fsp.stat(finalPath);
+  return sendJson(res, 201, { name, size: stat.size, mtime: stat.mtimeMs });
+}
+
+async function handleDelete(req, res, name) {
+  const base = path.basename(name);
+  if (base !== name || !/\.(mp4|webm)$/i.test(base)) {
+    return sendJson(res, 400, { error: 'Nama file tidak valid' });
+  }
+  try {
+    await fsp.unlink(path.join(OUTPUT, base));
+  } catch (error) {
+    if (error.code === 'ENOENT') return sendJson(res, 404, { error: 'Video tidak ada' });
+    throw error;
+  }
+  return sendJson(res, 200, { ok: true });
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const p = url.pathname;
-  if (req.method === 'GET' && p === '/api/config') {
-    return json(res, 200, { defaultDest: DEFAULT_DEST, storageReady: fs.existsSync(STORAGE_ROOT) });
+  let url;
+  try {
+    url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  } catch {
+    return sendText(res, 400, 'Permintaan tidak valid');
   }
-  if (req.method === 'GET' && p === '/api/jobs') {
-    const active = session ? session.job.id : null;
-    return json(res, 200, { active, jobs: jobs.slice(0, 10) });
-  }
+  const { pathname } = url;
 
-  if (req.method === 'DELETE' && p.startsWith('/api/jobs/')) {
-    const id = p.slice('/api/jobs/'.length);
-    if (session && session.job.id === id) return json(res, 409, { error: 'render masih berjalan' });
-    jobs = jobs.filter(j => j.id !== id);
-    saveJobs();
-    return json(res, 200, { ok: true });
-  }
-
-  if (req.method === 'GET' && p === '/api/videos') {
-    const list = fs.readdirSync(OUT)
-      .filter(f => /^video-\d+\.mp4$/.test(f))
-      .map(f => {
-        const st = fs.statSync(path.join(OUT, f));
-        return { name: f, size: st.size, mtime: st.mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-    return json(res, 200, list);
-  }
-
-  if (req.method === 'DELETE' && p.startsWith('/api/videos/')) {
-    const name = safeVideoName(p.slice('/api/videos/'.length));
-    if (!name) return json(res, 400, { error: 'nama file tidak valid' });
-    if (session && session.name === name) return json(res, 409, { error: 'video sedang dirender' });
-    const file = path.join(OUT, name);
-    if (!fs.existsSync(file)) return json(res, 404, { error: 'file tidak ditemukan' });
-    fs.unlinkSync(file);
-    return json(res, 200, { ok: true });
-  }
-
-  if (req.method === 'POST' && /^\/api\/videos\/[^/]+\/move$/.test(p)) {
-    const name = safeVideoName(p.split('/')[3]);
-    if (!name) return json(res, 400, { error: 'nama file tidak valid' });
-    if (session && session.name === name) return json(res, 409, { error: 'video sedang dirender' });
-    const src = path.join(OUT, name);
-    if (!fs.existsSync(src)) return json(res, 404, { error: 'file tidak ditemukan' });
-    if (!fs.existsSync(STORAGE_ROOT)) {
-      return json(res, 400, { error: 'Akses penyimpanan belum aktif. Jalankan "termux-setup-storage" dulu.' });
+  try {
+    if (pathname === '/api/videos') {
+      if (req.method === 'GET') return sendJson(res, 200, await listVideos());
+      if (req.method === 'POST') return await handleUpload(req, res);
+      return sendJson(res, 405, { error: 'Metode tidak didukung' });
     }
-    let body;
-    try { body = JSON.parse(await readBody(req)); }
-    catch { return json(res, 400, { error: 'JSON tidak valid' }); }
-    const destDir = path.resolve(String(body.dest || DEFAULT_DEST).trim());
-    if (!isAllowedDest(destDir)) return json(res, 400, { error: `Folder tujuan harus berada di ${STORAGE_ROOT}` });
-    try {
-      fs.mkdirSync(destDir, { recursive: true });
-      const target = path.join(destDir, name);
-      fs.copyFileSync(src, target);
-      fs.unlinkSync(src);
-      return json(res, 200, { ok: true, path: target });
-    } catch (e) {
-      return json(res, 500, { error: e.message });
+
+    if (pathname.startsWith('/api/videos/') && req.method === 'DELETE') {
+      return await handleDelete(req, res, decodeURIComponent(pathname.slice('/api/videos/'.length)));
     }
-  }
 
-  if (req.method === 'GET' && p.startsWith('/output/')) {
-    const name = safeVideoName(p.slice('/output/'.length));
-    const file = name && path.join(OUT, name);
-    if (!file || !fs.existsSync(file)) return json(res, 404, { error: 'not found' });
-    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': fs.statSync(file).size });
-    return fs.createReadStream(file).pipe(res);
-  }
-
-  if (req.method === 'POST' && p === '/api/audio') {
-    if (session) return json(res, 409, { error: 'render sedang berjalan' });
-    const type = req.headers['content-type'] || '';
-    if (!type.startsWith('audio/') && !/\.(mp3|wav|m4a|ogg|aac|flac)$/i.test(req.headers['x-filename'] || '')) {
-      return json(res, 400, { error: 'file harus berupa audio' });
-    }
-    if (+req.headers['content-length'] > MAX_AUDIO) return json(res, 400, { error: 'maks 60 MB' });
-    const buf = await readBody(req, true, MAX_AUDIO);
-    const ext = (path.extname(req.headers['x-filename'] || '') || '.mp3').toLowerCase().replace(/[^.a-z0-9]/g, '');
-    const id = `audio-${Date.now()}${ext}`;
-    fs.writeFileSync(path.join(TMP, id), buf);
-    const dur = await getProbe(path.join(TMP, id));
-    if (!dur) { fs.rm(path.join(TMP, id), () => {}); return json(res, 400, { error: 'audio tidak bisa dibaca' }); }
-    return json(res, 200, { id, duration: dur, name: req.headers['x-filename'] || id });
-  }
-
-  if (req.method === 'POST' && p === '/api/start') {
-    if (session) return json(res, 409, { error: 'render lain sedang berjalan' });
-
-    let body;
-    try { body = JSON.parse(await readBody(req)); }
-    catch { return json(res, 400, { error: 'JSON tidak valid' }); }
-
-    const width = Math.round(+body.width);
-    const height = Math.round(+body.height);
-    const fps = +body.fps;
-    const duration = +body.duration;
-    if (!width || !height || width > MAX_W || height > MAX_H || width % 2 || height % 2) {
-      return json(res, 400, { error: `Ukuran tidak valid (maks ${MAX_W}x${MAX_H}, harus genap)` });
-    }
-    if (!(fps > 0 && fps <= 120)) return json(res, 400, { error: 'FPS tidak valid' });
-    if (!(duration > 0)) return json(res, 400, { error: 'durasi tidak valid' });
-
-    let audioPath = null, audioInfo = null;
-    if (body.audio && body.audio.id && /^audio-\d+\.[a-z0-9]+$/.test(body.audio.id)) {
-      const ap = path.join(TMP, body.audio.id);
-      if (fs.existsSync(ap)) {
-        audioPath = ap;
-        audioInfo = { name: body.audio.name || body.audio.id, loop: !!body.audio.loop };
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      if (pathname.startsWith('/output/')) {
+        const name = path.basename(decodeURIComponent(pathname.slice('/output/'.length)));
+        if (!/\.(mp4|webm)$/i.test(name)) return sendText(res, 404, 'Tidak ditemukan');
+        const download = url.searchParams.get('download') ? name : null;
+        try {
+          return await sendFile(req, res, path.join(OUTPUT, name), { downloadName: download });
+        } catch (error) {
+          if (error.code === 'ENOENT') return sendText(res, 404, 'Tidak ditemukan');
+          throw error;
+        }
       }
+      return await serveStatic(req, res, pathname);
     }
 
-    const q = QUALITY[body.quality] || QUALITY.medium;
-    const name = `video-${Date.now()}.mp4`;
-    const out = path.join(OUT, name);
-    const id = name.replace('.mp4', '');
-
-    const args = ['-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(fps), '-i', '-'];
-    if (audioPath) {
-      if (audioInfo.loop) args.push('-stream_loop', '-1');
-      args.push('-i', audioPath);
-      args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '160k', '-shortest');
-    }
-    args.push(
-      '-c:v', 'libx264', '-preset', q.preset, '-crf', q.crf,
-      '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-t', String(duration),
-      '-movflags', '+faststart', out
-    );
-
-    const ff = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] });
-    let log = '';
-    ff.stderr.on('data', d => { log = (log + d).slice(-4000); });
-    ff.stdin.on('error', () => {});
-
-    const job = {
-      id, name, status: 'running',
-      width, height, fps, duration,
-      quality: body.quality || 'medium',
-      audio: audioInfo ? audioInfo.name : null,
-      frames: 0, total: Math.round(duration * fps),
-      startedAt: Date.now(), finishedAt: null, error: null,
-    };
-    jobs.unshift(job);
-    saveJobs();
-
-    session = {
-      job, ff, name, audioPath,
-      frameBytes: width * height * 4,
-      lastSeen: Date.now(),
-      getLog: () => log,
-    };
-    ff.on('close', code => {
-      if (session && session.ff === ff) {
-        failSession('FFmpeg berhenti: ' + log.slice(-200));
-      }
-    });
-    return json(res, 200, { ok: true, id });
+    return sendJson(res, 405, { error: 'Metode tidak didukung' });
+  } catch (error) {
+    console.error(error);
+    if (!res.headersSent) sendJson(res, 500, { error: error.message || 'Kesalahan server' });
+    else res.destroy();
   }
-  
-  if (req.method === 'POST' && p === '/api/frame') {
-    if (!session) return json(res, 400, { error: 'belum start' });
-    const buf = await readBody(req, true, 40 * 1024 * 1024);
-    if (buf.length !== session.frameBytes) {
-      return json(res, 400, { error: `ukuran frame salah: ${buf.length} byte` });
-    }
-    session.lastSeen = Date.now();
-    session.job.frames += 1;
-    if (!session.ff.stdin.write(buf)) {
-      await new Promise(r => session.ff.stdin.once('drain', r));
-    }
-    return json(res, 200, { ok: true, frames: session.job.frames });
-  }
-
-  if (req.method === 'POST' && p === '/api/finish') {
-    if (!session) return json(res, 400, { error: 'belum start' });
-    const s = session;
-    session = null;
-    s.ff.stdin.end();
-    const code = await new Promise(r => s.ff.on('close', r));
-    if (s.audioPath) fs.rm(s.audioPath, () => {});
-    if (code !== 0) {
-      s.job.status = 'error'; s.job.error = s.getLog().slice(-300); s.job.finishedAt = Date.now();
-      saveJobs();
-      return json(res, 500, { error: s.getLog() });
-    }
-    s.job.status = 'done'; s.job.finishedAt = Date.now(); s.job.file = `/output/${s.name}`;
-    saveJobs();
-    return json(res, 200, { file: `/output/${s.name}`, name: s.name });
-  }
-
-  if (req.method === 'POST' && p === '/api/abort') {
-    if (session) failSession('Dibatalkan pengguna');
-    return json(res, 200, { ok: true });
-  }
-
-  if (req.method === 'GET') {
-    const rel = p === '/' ? 'index.html' : p.slice(1);
-    const file = path.join(PUB, path.normalize(rel));
-    if (file.startsWith(PUB + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()) {
-      res.writeHead(200, {
-        'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-        'Cache-Control': 'no-cache',
-      });
-      return fs.createReadStream(file).pipe(res);
-    }
-  }
-
-  json(res, 404, { error: 'not found' });
 });
 
-server.listen(PORT, () => {
-  console.log(`Code → Video berjalan di http://localhost:${PORT}`);
-  console.log('Buka alamat itu di browser HP kamu (Chrome/Firefox).');
+server.listen(PORT, HOST, () => {
+  console.log(`Code → Video: http://localhost:${PORT}`);
+  console.log(`Video disimpan di ${OUTPUT}`);
 });
