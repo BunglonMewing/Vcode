@@ -787,6 +787,7 @@ main {
 .empty .ms { font-size: 28px; color: var(--outline); }
 .empty__title { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--on-surface); }
 .empty .body { margin: 0; max-width: 34ch; }
+.empty .btn { margin-top: 4px; }
 
 /* Gallery */
 .gallery { display: grid; gap: 12px; }

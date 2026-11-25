@@ -203,9 +203,9 @@ dan berikan file tersebut bersama gambar referensi ke AI agent.
 
 ## 10. Penyimpanan Video dan Composition
 
-- Video hasil render disimpan di IndexedDB browser ini dan muncul di tab **Galeri**.
-- Tombol **Unduh** menyimpan file `.mp4` (atau `.webm`) ke folder unduhan perangkat.
-- Menghapus video di Galeri hanya menghapus salinan di browser. File yang sudah diunduh tetap ada.
-- Penyimpanan browser punya kuota. Jika Galeri menolak menyimpan, unduh video lalu hapus dari Galeri.
-- Composition yang disimpan di tab **Simpan** tersimpan di `localStorage` browser yang sama.
+- Video hasil render diunggah ke server dan disimpan di folder `output/`, lalu muncul di tab **Galeri**.
+- Tombol **Unduh** mengambil file `.mp4` (atau `.webm`) dari server ke folder unduhan perangkat.
+- Menghapus video di Galeri menghapus file di `output/`. File yang sudah diunduh tetap ada.
+- Jika server tidak bisa dijangkau saat menyimpan, video tetap bisa diunduh dari panel hasil render.
+- Composition yang disimpan di tab **Simpan** tersimpan di `localStorage` browser.
   Gunakan **Ekspor** untuk memindahkannya ke perangkat atau browser lain.

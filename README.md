@@ -1,32 +1,37 @@
 # Code → Video
 
-Code → Video is a static website that turns JavaScript canvas code into a video. You write a composition, preview the animation, and the page encodes the video **in the browser**. There is no backend, no upload, and no FFmpeg: the whole app is HTML, CSS, and JavaScript.
+Code → Video turns JavaScript canvas code into a video. You write a composition, preview the animation, and the page encodes the video **in the visitor's browser**. A small Node server serves the site and stores the rendered files in `output/`.
 
-## Apa yang berubah
+No npm dependencies, no build step, no FFmpeg. The rendering library (`mp4-muxer`) and the icons/fonts are fetched by the browser automatically on first use.
 
-Versi sebelumnya memakai Node.js dan FFmpeg di server. Sekarang semua render terjadi di
-perangkat pengguna:
+## Cara kerja
 
 - Frame digambar ke canvas, lalu dikirim ke encoder video browser lewat **WebCodecs**.
-- **mp4-muxer** (dimuat dari CDN saat pertama kali render) membungkus hasilnya menjadi `.mp4` H.264.
+- **mp4-muxer** (di-load otomatis dari CDN) membungkus hasilnya menjadi `.mp4` H.264.
 - Browser tanpa WebCodecs memakai **MediaRecorder** dan menghasilkan `.webm`.
-- Video hasil render disimpan di **IndexedDB**; composition tersimpan di `localStorage`.
-- Tidak ada dependency npm, tidak ada proses build, tidak ada `server.js`.
+- Setelah selesai, file diunggah ke server dan disimpan di `output/`. Galeri membaca folder itu.
+- Composition tersimpan di `localStorage` browser.
 
 ## Menjalankan
 
-File disajikan sebagai situs statis. Karena memakai ES module dan `fetch`, halaman harus dibuka
-lewat HTTP, bukan `file://`.
+Butuh Node.js 16 atau lebih baru. Tidak ada yang perlu di-install.
 
 ```bash
-python3 -m http.server 3000 --directory public
-# atau
-npx serve public
+node server.js
 ```
 
-Buka `http://localhost:3000`. Untuk hosting, unggah isi folder `public/` ke GitHub Pages,
-Cloudflare Pages, Netlify, atau server statis mana pun. Semua path bersifat relatif, jadi subfolder
-juga berfungsi.
+Buka `http://localhost:3000`. Port bisa diganti lewat `PORT=4000 node server.js`.
+
+### Di Termux (Android)
+
+```bash
+pkg install -y nodejs git
+git clone https://github.com/Frhanz79/code-video.git
+cd code-video
+node server.js
+```
+
+Buka `http://localhost:3000` di Chrome. Tidak perlu `ffmpeg`, tidak perlu `npm install`.
 
 ## Browser yang didukung
 
@@ -47,10 +52,11 @@ dirender tanpa audio. Badge di kanan atas menunjukkan mesin yang dipakai browser
 - Preview deterministik berbasis waktu
 - Render MP4 di browser dengan resolusi, rasio, kualitas, FPS, dan durasi yang bisa diatur
 - Audio opsional dengan loop, di-decode dan di-encode di browser
-- Galeri video lokal (IndexedDB) dengan putar, unduh, dan hapus
+- Galeri dari folder `output/` di server: putar, unduh, hapus
 - Composition tersimpan di browser, plus impor dan ekspor JSON
 - Dokumentasi composition di dalam aplikasi
 - Antarmuka Material 3 (Material You) dengan mode terang dan gelap otomatis
+- Service worker untuk memuat ulang aplikasi saat offline
 
 ## Format composition
 
@@ -70,18 +76,33 @@ Referensi lengkap ada di [public/docs.md](public/docs.md) dan di tab **Docs** ap
 ## Struktur proyek
 
 ```
-public/
-├── index.html     Layout Material 3
-├── style.css      Token dan komponen Material 3
-├── app.js         Editor, props, preview, galeri, penyimpanan
-├── render.js      Encoder browser: WebCodecs + mp4-muxer, MediaRecorder
-├── gallery.js     Penyimpanan video di IndexedDB
-├── templates.js   Template composition bawaan
-├── docs.md        Referensi composition
-├── SKILL.md       Skill untuk AI agent
-├── sw.js          Service worker untuk mode offline
-└── manifest.json  Manifest PWA
+.
+├── server.js       Server HTTP: file statis, API video, streaming range
+├── output/         Video hasil render (dibuat otomatis, tidak di-commit)
+└── public/
+    ├── index.html     Layout Material 3
+    ├── style.css      Token dan komponen Material 3
+    ├── app.js         Editor, props, preview, galeri, penyimpanan
+    ├── render.js      Encoder browser: WebCodecs + mp4-muxer, MediaRecorder
+    ├── gallery.js     Klien API video server
+    ├── templates.js   Template composition bawaan
+    ├── docs.md        Referensi composition
+    ├── SKILL.md       Skill untuk AI agent
+    ├── sw.js          Service worker
+    └── manifest.json  Manifest PWA
 ```
+
+## API
+
+| Method | Endpoint | Fungsi |
+|---|---|---|
+| GET | `/api/videos` | Daftar video di `output/` |
+| POST | `/api/videos` | Simpan video hasil render (header `X-Filename`, body file) |
+| DELETE | `/api/videos/:name` | Hapus satu video |
+| GET | `/output/:name` | Streaming video, mendukung Range |
+| GET | `/output/:name?download=1` | Unduh video |
+
+Batas unggahan 250 MB per file. Nama file dibersihkan dan dibuat unik oleh server.
 
 ## Catatan render
 
@@ -89,7 +110,7 @@ public/
 - Pada jalur MediaRecorder, render berjalan real-time, jadi video 30 detik butuh 30 detik.
 - Resolusi 4K dan durasi panjang membutuhkan memori besar. Turunkan resolusi atau kualitas bila
   encoder menolak.
-- Kuota IndexedDB berbeda per browser. Unduh video penting, lalu hapus dari Galeri bila penuh.
+- Jika server tidak bisa dijangkau saat menyimpan, video tetap bisa diunduh dari panel hasil.
 
 ## Lisensi
 

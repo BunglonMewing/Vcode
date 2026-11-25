@@ -1,41 +1,41 @@
-const DB_NAME = 'codevideo';
-const DB_VERSION = 1;
-const STORE = 'videos';
+const API = 'api/videos';
 
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: 'id' });
-        store.createIndex('createdAt', 'createdAt');
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+async function request(url, options) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const data = await response.json();
+      if (data.error) message = data.error;
+    } catch {
+      // Body not JSON; keep the status message.
+    }
+    throw new Error(message);
+  }
+  return response;
 }
 
-function run(mode, action) {
-  return openDb().then(db => new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, mode);
-    const request = action(tx.objectStore(STORE));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-    tx.oncomplete = () => db.close();
-  }));
+export function videoUrl(name) {
+  return `/output/${encodeURIComponent(name)}`;
 }
 
 export async function listVideos() {
-  const rows = await run('readonly', store => store.getAll());
-  return rows.sort((a, b) => b.createdAt - a.createdAt);
+  const response = await request(API, { cache: 'no-store' });
+  return response.json();
 }
 
-export function saveVideo(record) {
-  return run('readwrite', store => store.put(record));
+export async function saveVideo(video) {
+  const response = await request(API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': video.blob.type || 'video/mp4',
+      'X-Filename': video.name,
+    },
+    body: video.blob,
+  });
+  return response.json();
 }
 
-export function removeVideo(id) {
-  return run('readwrite', store => store.delete(id));
+export async function removeVideo(name) {
+  await request(`${API}/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }

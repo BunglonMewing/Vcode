@@ -1,4 +1,4 @@
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `codevideo-${VERSION}`;
 const SHELL = [
   './',
@@ -34,6 +34,9 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
+
+  // Video API and rendered files always come from the network.
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/output/')) return;
 
   // Fonts and the mp4 muxer come from a CDN: cache them after the first load.
   if (url.origin !== self.location.origin) {

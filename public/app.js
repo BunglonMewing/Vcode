@@ -1,6 +1,6 @@
 import { TEMPLATES } from './templates.js';
 import { engineInfo, renderComposition, decodeAudio } from './render.js';
-import { listVideos, saveVideo, removeVideo } from './gallery.js';
+import { listVideos, saveVideo, removeVideo, videoUrl } from './gallery.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('cv');
@@ -33,7 +33,6 @@ let previewFrame = null;
 let renderController = null;
 let audio = null;
 let resultUrl = null;
-const galleryUrls = [];
 
 function dims() {
   const [rw, rh] = RATIOS[state.ratio];
@@ -597,11 +596,6 @@ function timestamp() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function uniqueId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function showResult(record) {
   if (resultUrl) URL.revokeObjectURL(resultUrl);
   resultUrl = URL.createObjectURL(record.blob);
@@ -656,24 +650,20 @@ async function startRender() {
     });
 
     const record = {
-      id: uniqueId(),
       name: `codevideo-${timestamp()}.${result.ext}`,
       blob: result.blob,
       mime: result.mime,
       size: result.blob.size,
-      width: d.width,
-      height: d.height,
-      fps: d.fps,
-      duration: d.duration,
-      quality: state.quality,
-      audio: result.hasAudio,
-      mode: result.mode,
-      createdAt: Date.now(),
     };
 
-    await saveVideo(record);
     showResult(record);
-    toast(result.mode === 'mp4' ? 'MP4 selesai dirender' : 'WebM selesai dirender', 'success');
+
+    try {
+      await saveVideo({ name: record.name, blob: record.blob });
+      toast(`${result.mode === 'mp4' ? 'MP4' : 'WebM'} selesai dan tersimpan di server`, 'success');
+    } catch (error) {
+      toast(`Video selesai, tapi gagal disimpan ke server: ${error.message}. Pakai tombol Unduh di bawah.`, 'warn', 'cloud_off');
+    }
   } catch (error) {
     if (error.name === 'AbortError') toast('Render dihentikan', 'warn', 'stop_circle');
     else toast('Render gagal: ' + error.message, 'error');
@@ -704,14 +694,13 @@ function formatDate(ms) {
 }
 
 function galleryCard(record) {
-  const url = URL.createObjectURL(record.blob);
-  galleryUrls.push(url);
+  const src = videoUrl(record.name);
 
   const card = document.createElement('article');
   card.className = 'vid';
 
   const video = document.createElement('video');
-  video.src = url;
+  video.src = src;
   video.controls = true;
   video.playsInline = true;
   video.preload = 'metadata';
@@ -725,14 +714,15 @@ function galleryCard(record) {
 
   const meta = document.createElement('p');
   meta.className = 'support';
-  meta.textContent = [
-    `${record.width}×${record.height}`,
-    `${record.fps} fps`,
-    formatDuration(record.duration),
-    formatSize(record.size),
-    record.audio ? 'audio' : null,
-    formatDate(record.createdAt),
-  ].filter(Boolean).join(' · ');
+  const baseMeta = [formatSize(record.size), formatDate(record.mtime)];
+  meta.textContent = baseMeta.join(' · ');
+
+  video.addEventListener('loadedmetadata', () => {
+    const parts = [];
+    if (video.videoWidth && video.videoHeight) parts.push(`${video.videoWidth}×${video.videoHeight}`);
+    if (Number.isFinite(video.duration) && video.duration > 0) parts.push(formatDuration(video.duration));
+    meta.textContent = [...parts, ...baseMeta].join(' · ');
+  }, { once: true });
 
   info.append(name, meta);
 
@@ -741,7 +731,7 @@ function galleryCard(record) {
 
   const download = document.createElement('a');
   download.className = 'btn btn--text';
-  download.href = url;
+  download.href = `${src}?download=1`;
   download.download = record.name;
   download.innerHTML = '<span class="ms" aria-hidden="true">download</span> Unduh';
 
@@ -752,15 +742,19 @@ function galleryCard(record) {
   remove.addEventListener('click', async () => {
     const confirmed = await ask({
       title: 'Hapus video?',
-      text: `"${record.name}" dihapus dari browser ini. File yang sudah diunduh tidak terpengaruh.`,
+      text: `"${record.name}" dihapus dari folder output server.`,
       icon: 'delete',
       okText: 'Hapus',
       danger: true,
     });
     if (!confirmed) return;
-    await removeVideo(record.id);
-    toast('Video dihapus', 'warn', 'delete');
-    loadGallery();
+    try {
+      await removeVideo(record.name);
+      toast('Video dihapus', 'warn', 'delete');
+      loadGallery();
+    } catch (error) {
+      toast('Gagal menghapus: ' + error.message, 'error');
+    }
   });
 
   actions.append(download, remove);
@@ -770,8 +764,6 @@ function galleryCard(record) {
 
 async function loadGallery() {
   const box = $('galleryList');
-  galleryUrls.forEach(url => URL.revokeObjectURL(url));
-  galleryUrls.length = 0;
   box.innerHTML = '';
   box.appendChild(emptyState('hourglass_top', 'Memuat video…'));
 
@@ -779,7 +771,7 @@ async function loadGallery() {
     const videos = await listVideos();
     box.innerHTML = '';
     $('galleryCount').textContent = videos.length
-      ? `${videos.length} video tersimpan di browser ini.`
+      ? `${videos.length} video di folder output server.`
       : 'Belum ada video. Hasil render muncul di sini.';
 
     if (!videos.length) {
@@ -794,11 +786,18 @@ async function loadGallery() {
     videos.forEach(record => box.appendChild(galleryCard(record)));
   } catch {
     box.innerHTML = '';
-    box.appendChild(emptyState(
-      'error',
-      'Galeri tidak bisa dibuka',
-      'Penyimpanan browser diblokir atau penuh. Coba mode normal, bukan mode privat.',
-    ));
+    const state = emptyState(
+      'cloud_off',
+      'Server tidak menjawab',
+      'Jalankan node server.js, lalu coba lagi. Galeri dibaca dari folder output server.',
+    );
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn--tonal';
+    retry.innerHTML = '<span class="ms" aria-hidden="true">refresh</span> Coba lagi';
+    retry.addEventListener('click', loadGallery);
+    state.appendChild(retry);
+    box.appendChild(state);
   }
 }
 
