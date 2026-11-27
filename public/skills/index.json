@@ -1,0 +1,37 @@
+[
+  {
+    "id": "remotion",
+    "name": "Remotion inti",
+    "group": "Remotion",
+    "file": "remotion.md",
+    "description": "Frame, Composition, interpolate, spring, dan aturan output."
+  },
+  {
+    "id": "remotion-timing",
+    "name": "Timing & easing",
+    "group": "Remotion",
+    "file": "remotion-timing.md",
+    "description": "interpolate, spring, Sequence, dan kurva easing."
+  },
+  {
+    "id": "remotion-layout",
+    "name": "Layout video",
+    "group": "Remotion",
+    "file": "remotion-layout.md",
+    "description": "Safe margin, skala teks, kontras, dan hierarki untuk video."
+  },
+  {
+    "id": "remotion-scenes",
+    "name": "Multi-scene",
+    "group": "Remotion",
+    "file": "remotion-scenes.md",
+    "description": "Memecah video menjadi adegan dengan cut dan transisi."
+  },
+  {
+    "id": "canvas-2d",
+    "name": "Canvas 2D",
+    "group": "Canvas",
+    "file": "canvas-2d.md",
+    "description": "Gradien, teks, blur, blend mode, dan performa render."
+  }
+]

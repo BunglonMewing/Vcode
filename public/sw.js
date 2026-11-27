@@ -1,4 +1,4 @@
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `codevideo-${VERSION}`;
 const SHELL = [
   './',
@@ -8,7 +8,17 @@ const SHELL = [
   './render.js',
   './gallery.js',
   './templates.js',
+  './compiler.js',
+  './remotion.js',
+  './ai.js',
+  './ai-page.js',
   './docs.md',
+  './skills/index.json',
+  './skills/remotion.md',
+  './skills/remotion-timing.md',
+  './skills/remotion-layout.md',
+  './skills/remotion-scenes.md',
+  './skills/canvas-2d.md',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -35,7 +45,7 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(request.url);
 
-  // Video API and rendered files always come from the network.
+  // Video API, AI proxy, and rendered files always come from the network.
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/output/')) return;
 
   // Fonts and the mp4 muxer come from a CDN: cache them after the first load.

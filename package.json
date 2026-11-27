@@ -1,0 +1,20 @@
+{
+  "name": "code-video",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Code → Video: composition JavaScript dirender jadi MP4 di browser, lengkap dengan AI Chatku dan aplikasi Android lewat Capacitor.",
+  "scripts": {
+    "start": "node server.js",
+    "cap:add": "cap add android",
+    "cap:sync": "cap sync android",
+    "cap:open": "cap open android",
+    "android:apk": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/core": "^7.4.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3"
+  }
+}

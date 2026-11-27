@@ -146,6 +146,36 @@ pts.forEach(p => {
 });
 ctx.globalAlpha = 1;`,
 
+  reveal: `/* meta { "duration": 5, "fps": 30, "ratio": "16:9" } */
+/* props [
+  {"key":"judul","label":"Judul","type":"text","value":"Code → Video"},
+  {"key":"aksen","label":"Warna aksen","type":"color","value":"#d0bcff"},
+  {"key":"latar","label":"Warna latar","type":"color","value":"#0b0d14"}
+] */
+// 0.0-0.8 dtk : garis aksen tumbuh dari kiri
+// 0.5-1.3 dtk : judul naik dengan spring
+// 1.3-D       : hold
+const U = Math.min(W, H);
+const frame = Math.round(t * FPS);
+const M = U * 0.08;
+
+ctx.fillStyle = P.latar;
+ctx.fillRect(0, 0, W, H);
+
+const garis = interpolate(frame, [0, 24], [0, W - M * 2], { extrapolateRight: 'clamp' });
+ctx.fillStyle = P.aksen;
+ctx.fillRect(M, H * 0.62, garis, Math.max(2, U * 0.006));
+
+const naik = spring({ frame: frame - 15, fps: FPS, config: { damping: 14, stiffness: 110 } });
+ctx.save();
+ctx.globalAlpha = Math.min(1, Math.max(0, naik));
+ctx.fillStyle = '#ffffff';
+ctx.font = \`bold \${U * 0.11}px sans-serif\`;
+ctx.textAlign = 'left';
+ctx.textBaseline = 'alphabetic';
+ctx.fillText(P.judul, M, H * 0.62 - U * 0.06 + (1 - naik) * U * 0.05);
+ctx.restore();`,
+
   torus: `/* props [] */
 // Torus (donat) 3D berputar dengan z-buffer per piksel
 ctx.fillStyle = '#0a0812';
