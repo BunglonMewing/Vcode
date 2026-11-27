@@ -40,6 +40,10 @@
       <span class="nav-ind"><span class="ms">code</span></span>
       <span class="nav-label">Editor</span>
     </a>
+    <a class="nav-item" href="#ai" data-tab="ai">
+      <span class="nav-ind"><span class="ms">smart_toy</span></span>
+      <span class="nav-label">AI</span>
+    </a>
     <a class="nav-item" href="#render" data-tab="render">
       <span class="nav-ind"><span class="ms">movie</span></span>
       <span class="nav-label">Render</span>
@@ -75,6 +79,7 @@
           <span class="ms text-field__icon" aria-hidden="true">arrow_drop_down</span>
         </div>
         <p class="support">Template mengisi editor. Kode bisa diubah setelahnya.</p>
+        <p class="support">Editor menerima body fungsi <code>ctx, t, W, H, D, P</code> atau modul JS penuh dengan <code>export default</code>, <code>function draw(...)</code>, atau objek <code>{ draw, setup }</code>.</p>
       </section>
 
       <section class="card" aria-labelledby="codeHeading">
@@ -228,6 +233,47 @@
       </section>
     </section>
 
+    <!-- AI CHAT -->
+    <section class="page" id="page-ai" hidden>
+      <section class="card card--accent">
+        <div class="card__head">
+          <h2 class="card__title"><span class="ms" aria-hidden="true">smart_toy</span> AI Chatku</h2>
+          <span class="engine engine--sm" id="aiStatus">Memeriksa AI…</span>
+        </div>
+        <p class="body">Tulis apa yang kamu mau. AI menulis composition JavaScript-nya, lalu kode itu bisa langsung dirender jadi video di perangkat ini.</p>
+        <div class="button-row">
+          <button class="btn btn--outlined" id="aiConfigure" type="button"><span class="ms" aria-hidden="true">settings</span> Pengaturan AI</button>
+          <button class="btn btn--text" id="chatClear" type="button"><span class="ms" aria-hidden="true">delete_sweep</span> Hapus riwayat</button>
+        </div>
+        <p class="support" id="aiSetupHint" hidden>Belum ada kunci AI. Isi base URL dan API key di Pengaturan AI. Kunci hanya disimpan di perangkat ini.</p>
+      </section>
+
+      <section class="card card--chat" aria-labelledby="chatHeading">
+        <h2 class="card__title" id="chatHeading"><span class="ms" aria-hidden="true">forum</span> Percakapan</h2>
+
+        <div class="chat" id="chatLog" role="log" aria-live="polite"></div>
+
+        <form class="composer" id="chatForm">
+          <div class="text-field composer__field">
+            <textarea id="chatInput" rows="1" placeholder=" " aria-label="Tulis permintaan"></textarea>
+            <label for="chatInput">Minta composition…</label>
+          </div>
+          <button class="icon-btn composer__send" id="chatSend" type="submit" aria-label="Kirim" title="Kirim"><span class="ms" aria-hidden="true">send</span></button>
+          <button class="btn btn--text" id="chatStop" type="button" hidden><span class="ms" aria-hidden="true">stop_circle</span> Stop</button>
+        </form>
+
+        <div class="setting setting--tight">
+          <div class="setting__label">Skill yang dipakai AI</div>
+          <div class="chips" id="skillChips" role="group" aria-label="Skill"></div>
+        </div>
+
+        <div class="setting setting--tight">
+          <div class="setting__label">Mulai cepat</div>
+          <div class="chips" id="aiQuick" role="group" aria-label="Contoh permintaan"></div>
+        </div>
+      </section>
+    </section>
+
     <!-- GALERI -->
     <section class="page" id="page-gallery" hidden>
       <section class="card" aria-labelledby="galleryHeading">
@@ -267,6 +313,14 @@
           <button class="btn btn--outlined" id="copyDocs" type="button"><span class="ms" aria-hidden="true">content_copy</span> Salin Markdown</button>
           <a class="btn btn--filled" href="SKILL.md" download="SKILL.md"><span class="ms" aria-hidden="true">download</span> Unduh SKILL.md</a>
         </div>
+        <h3 class="setting__label settings-label">Skill Remotion</h3>
+        <div class="skill-links">
+          <a class="btn btn--text" href="skills/remotion.md" download><span class="ms" aria-hidden="true">description</span> Remotion inti</a>
+          <a class="btn btn--text" href="skills/remotion-timing.md" download><span class="ms" aria-hidden="true">description</span> Timing &amp; easing</a>
+          <a class="btn btn--text" href="skills/remotion-layout.md" download><span class="ms" aria-hidden="true">description</span> Layout video</a>
+          <a class="btn btn--text" href="skills/remotion-scenes.md" download><span class="ms" aria-hidden="true">description</span> Multi-scene</a>
+          <a class="btn btn--text" href="skills/canvas-2d.md" download><span class="ms" aria-hidden="true">description</span> Canvas 2D</a>
+        </div>
         <article class="md" id="docView">Memuat dokumentasi…</article>
       </section>
     </section>
@@ -288,6 +342,30 @@
     <div class="dialog__actions">
       <button class="btn btn--text" value="cancel" id="mCancel" type="submit">Batal</button>
       <button class="btn btn--text" value="ok" id="mOk" type="submit">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="aiDialog">
+  <form method="dialog" class="dialog dialog--ai">
+    <div class="dialog__icon"><span class="ms" aria-hidden="true">smart_toy</span></div>
+    <h2 class="dialog__title">Pengaturan AI</h2>
+    <p class="dialog__text">Dipakai oleh AI Chatku. Kunci disimpan di localStorage perangkat ini dan dikirim langsung ke penyedia AI. Kosongkan bila server sudah punya kunci sendiri.</p>
+    <div class="text-field dialog__field">
+      <input id="aiBase" placeholder=" " autocomplete="off" spellcheck="false">
+      <label for="aiBase">Base URL</label>
+    </div>
+    <div class="text-field dialog__field">
+      <input id="aiKey" type="password" placeholder=" " autocomplete="off" spellcheck="false">
+      <label for="aiKey">API key</label>
+    </div>
+    <div class="text-field dialog__field">
+      <input id="aiModel" placeholder=" " autocomplete="off" spellcheck="false">
+      <label for="aiModel">Model</label>
+    </div>
+    <div class="dialog__actions">
+      <button class="btn btn--text" type="button" id="aiCancel">Batal</button>
+      <button class="btn btn--text" type="button" id="aiSave">Simpan</button>
     </div>
   </form>
 </dialog>

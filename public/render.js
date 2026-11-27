@@ -166,7 +166,7 @@ async function renderMp4(options) {
       if (signal?.aborted) throw abortError();
       if (encoderError) throw encoderError;
 
-      draw(ctx, i / fps, width, height, duration, props);
+      draw(ctx, i / fps, width, height, duration, props, { fps, frame: i, durationInFrames: total });
 
       const frame = new VideoFrame(canvas, {
         timestamp: Math.round((i * 1e6) / fps),
@@ -281,7 +281,7 @@ async function renderWithRecorder(options) {
         const elapsed = (performance.now() - start) / 1000;
         const index = Math.min(total - 1, Math.floor(elapsed * fps));
         try {
-          draw(ctx, index / fps, width, height, duration, props);
+          draw(ctx, index / fps, width, height, duration, props, { fps, frame: index, durationInFrames: total });
         } catch (error) {
           return reject(error);
         }

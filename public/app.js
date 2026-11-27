@@ -1,19 +1,22 @@
 import { TEMPLATES } from './templates.js';
 import { engineInfo, renderComposition, decodeAudio } from './render.js';
 import { listVideos, saveVideo, removeVideo, videoUrl } from './gallery.js';
+import { compileComposition, parseProps, parseMeta } from './compiler.js';
+import { initAiPage } from './ai-page.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('cv');
 const ctx = canvas.getContext('2d');
 
-const TABS = ['editor', 'render', 'gallery', 'saved', 'docs'];
-const TITLES = { editor: 'Editor', render: 'Render', gallery: 'Galeri', saved: 'Tersimpan', docs: 'Dokumentasi' };
+const TABS = ['editor', 'ai', 'render', 'gallery', 'saved', 'docs'];
+const TITLES = { editor: 'Editor', ai: 'AI Chatku', render: 'Render', gallery: 'Galeri', saved: 'Tersimpan', docs: 'Dokumentasi' };
 const TEMPLATE_NAMES = {
   particles: ['Partikel', '2D'],
   bars: ['Bar chart', '2D'],
   typewriter: ['Ketik', '2D'],
   wave: ['Gelombang', '2D'],
   pulse: ['Denyut', '2D'],
+  reveal: ['Reveal (Remotion)', '2D'],
   cube: ['Kubus', '3D'],
   globe: ['Bola titik', '3D'],
   torus: ['Torus', '3D'],
@@ -33,6 +36,7 @@ let previewFrame = null;
 let renderController = null;
 let audio = null;
 let resultUrl = null;
+let aiPage = null;
 
 function dims() {
   const [rw, rh] = RATIOS[state.ratio];
@@ -96,6 +100,7 @@ function showTab() {
   if (tab === 'gallery') loadGallery();
   if (tab === 'saved') renderSaved();
   if (tab === 'docs') loadDocs();
+  if (tab === 'ai') aiPage?.refreshStatus();
   window.scrollTo(0, 0);
 }
 
@@ -318,17 +323,6 @@ $('tplSelect').addEventListener('change', () => {
   toast(`Template "${TEMPLATE_NAMES[key][0]}" dimuat`, 'success', 'dashboard_customize');
 });
 
-function parseProps(code) {
-  const match = code.match(/\/\*\s*props\s*([\s\S]*?)\*\//);
-  if (!match) return [];
-  try {
-    const parsed = JSON.parse(match[1]);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function emptyState(icon, title, text) {
   const box = document.createElement('div');
   box.className = 'empty';
@@ -510,7 +504,49 @@ $('resetProps').onclick = async () => {
 };
 
 function compile(code) {
-  return new Function('ctx', 't', 'W', 'H', 'D', 'P', code);
+  return compileComposition(code).draw;
+}
+
+function applyDuration(value) {
+  const seconds = Math.round(Number(value) * 10) / 10;
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+  if (['3', '5', '10'].includes(String(seconds))) {
+    selectChip('dur', String(seconds));
+    return;
+  }
+  selectChip('dur', 'custom');
+  $('durInput').value = String(seconds);
+  readCustomDuration(true);
+}
+
+// Applies code coming from the AI chat, including the optional /* meta */ block.
+function applyCode(code) {
+  const value = String(code || '').trim();
+  if (!value) return;
+
+  $('code').value = value;
+  $('tplSelect').value = '';
+  propValues = {};
+
+  const meta = parseMeta(value);
+  if (meta.duration) applyDuration(meta.duration);
+  if (meta.fps) selectChip('fps', String(meta.fps));
+  if (meta.ratio && RATIOS[meta.ratio]) selectChip('ratio', meta.ratio);
+  if (meta.size) selectChip('size', String(meta.size));
+  if (meta.name) $('saveName').value = meta.name;
+
+  syncProps(true);
+}
+
+function renderNow() {
+  if (busy) {
+    toast('Render sedang berjalan', 'warn', 'hourglass_top');
+    return;
+  }
+  location.hash = '#render';
+  setTimeout(() => {
+    if (!busy) startRender();
+  }, 120);
 }
 
 function syncCanvas(d) {
@@ -548,7 +584,11 @@ function startPreview() {
     const time = ((now - startedAt) / 1000) % d.duration;
     try {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      draw(ctx, time, d.width, d.height, d.duration, { ...propValues });
+      draw(ctx, time, d.width, d.height, d.duration, { ...propValues }, {
+        fps: d.fps,
+        frame: Math.round(time * d.fps),
+        durationInFrames: Math.round(d.duration * d.fps),
+      });
     } catch (error) {
       stopPreview();
       toast('Runtime error: ' + error.message, 'error');
@@ -838,15 +878,7 @@ function loadComposition(entry) {
   if (settings.ratio) selectChip('ratio', settings.ratio);
   if (settings.fps) selectChip('fps', String(settings.fps));
   if (settings.quality) selectChip('quality', settings.quality);
-  if (settings.dur) {
-    if (['3', '5', '10'].includes(String(settings.dur))) {
-      selectChip('dur', String(settings.dur));
-    } else {
-      selectChip('dur', 'custom');
-      $('durInput').value = settings.dur;
-      readCustomDuration(true);
-    }
-  }
+  if (settings.dur) applyDuration(settings.dur);
 
   $('tplSelect').value = '';
   syncProps(true);
@@ -1081,6 +1113,14 @@ selectChip('quality', state.quality);
 selectChip('dur', String(state.dur));
 renderAudio();
 renderSaved();
+
+aiPage = initAiPage({
+  toast,
+  getCode: () => $('code').value,
+  applyCode,
+  renderNow,
+});
+
 $('play').setAttribute('aria-pressed', 'false');
 showTab();
 

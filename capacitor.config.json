@@ -1,0 +1,9 @@
+{
+  "appId": "com.bunglonmewing.codevideo",
+  "appName": "Code Video",
+  "webDir": "public",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": true
+  }
+}

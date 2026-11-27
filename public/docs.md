@@ -201,7 +201,74 @@ dan berikan file tersebut bersama gambar referensi ke AI agent.
 
 ---
 
-## 10. Penyimpanan Video dan Composition
+## 10. Composition dari JS murni
+
+Selain body fungsi, editor menerima modul JavaScript utuh. Compiler mengenali bentuk berikut:
+
+```js
+export default function draw(ctx, t, W, H, D, P) {
+  ctx.fillStyle = '#0b0d14';
+  ctx.fillRect(0, 0, W, H);
+}
+```
+
+```js
+function render(ctx, t, W, H, D, P) { /* ... */ }
+```
+
+```js
+function setup(ctx, env) {
+  // dipanggil sekali sebelum frame pertama
+}
+
+const draw = (ctx, t, W, H, D, P) => { /* ... */ };
+```
+
+Objek juga boleh: `export default { setup(ctx, env) {}, draw(ctx, t, W, H, D, P) {} }`.
+
+Baris `import` dibuang saat compile; tidak ada modul yang dimuat dari jaringan.
+
+### Blok meta
+
+Tambahkan di dekat awal kode untuk menentukan pengaturan render tanpa menyentuh panel:
+
+```js
+/* meta { "duration": 6, "fps": 30, "ratio": "9:16", "width": 1080, "name": "Intro produk" } */
+```
+
+`duration` dalam detik, `ratio` salah satu `1:1`, `16:9`, `9:16`, `4:5`. Nilai diabaikan jika tidak valid.
+
+### Helper Remotion
+
+Tersedia langsung di composition, baik body fungsi maupun modul:
+
+| Helper | Kegunaan |
+|---|---|
+| `interpolate(value, [in], [out], { easing, extrapolateLeft, extrapolateRight })` | Pemetaan nilai bertahap |
+| `spring({ frame, fps: FPS, config, from, to, delay, durationInFrames })` | Gerak pegas |
+| `Easing.linear / .ease / .cubic / .out(fn) / .inOut(fn) / ...` | Kurva easing |
+| `Sequence(frame, from, durationInFrames)` | Frame lokal per adegan, atau `null` |
+| `random(seed)` | Angka acak deterministik |
+| `clamp(value, min, max)` dan `lerp(from, to, progress)` | Bantu nilai |
+| `FPS` | Frame per detik yang sedang dirender |
+
+Contoh:
+
+```js
+const frame = Math.round(t * FPS);
+const p = interpolate(frame, [0, 24], [0, 1], { easing: Easing.out(Easing.cubic), extrapolateRight: 'clamp' });
+const naik = spring({ frame: frame - 12, fps: FPS, config: { damping: 14 } });
+```
+
+### AI Chatku
+
+Tab **AI** menulis composition dari deskripsi. Hasilnya bisa dipasang ke editor dengan **Pakai kode** atau langsung dirender dengan **Render**. Skill yang dipakai AI bisa dipilih di tab itu; berkas skill ada di folder `skills/`.
+
+Kunci AI dibaca server dari `AI_API_KEY`, `AI_BASE_URL`, dan `AI_MODEL` (lihat `.env.example`). Tanpa server, isi base URL dan kunci di **Pengaturan AI**; nilainya hanya tersimpan di perangkat.
+
+---
+
+## 11. Penyimpanan Video dan Composition
 
 - Video hasil render diunggah ke server dan disimpan di folder `output/`, lalu muncul di tab **Galeri**.
 - Tombol **Unduh** mengambil file `.mp4` (atau `.webm`) dari server ke folder unduhan perangkat.
