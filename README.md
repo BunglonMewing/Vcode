@@ -81,9 +81,15 @@ Set kunci di berkas `.env` (diabaikan git) atau variabel lingkungan:
 | `AI_API_KEY` | Kunci penyedia AI |
 | `AI_BASE_URL` | Endpoint OpenAI-compatible milik penerbit kunci, tanpa `/` di akhir |
 | `AI_MODEL` | Default `deepseek-v4.1-flash-1017` |
-| `AI_TIMEOUT_MS` | Batas waktu permintaan, default 120000 |
+| `AI_TIMEOUT_MS` | Batas waktu permintaan, default 120000 (otomatis 55000 di Vercel) |
 
 Contoh `.env` ada di [.env.example](.env.example).
+
+### Kunci AI di Vercel
+
+Kunci tidak harus di `.env`; di Vercel isi variabel yang sama di **Project → Settings → Environment Variables** (Production, Preview, dan Development). Folder [`api/`](api/) berisi fungsi `api/ai/config.js` dan `api/ai/chat.js` yang membaca variabel itu saat runtime, jadi nilai asli tidak pernah masuk repo. Logika proxy-nya satu sumber di [`lib/ai-proxy.js`](lib/ai-proxy.js), dipakai juga oleh `server.js`.
+
+[`vercel.json`](vercel.json) menyajikan `public/` sebagai output statis dan memberi `maxDuration: 60` untuk fungsi di `api/`. Vercel Hobby mematikan fungsi setelah 60 detik, karena itu `AI_TIMEOUT_MS` dipangkas ke 55 detik di sana agar chat berhenti dengan pesan yang jelas. Setelah mengubah variabel, redeploy (atau tunggu deployment berikutnya) supaya nilai baru terbaca.
 
 Endpoint yang dipakai aplikasi:
 

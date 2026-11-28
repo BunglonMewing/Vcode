@@ -4,6 +4,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const aiProxy = require('./lib/ai-proxy');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -12,12 +13,6 @@ const OUTPUT = path.join(__dirname, 'output');
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 250 * 1024 * 1024;
-
-const AI_API_KEY = process.env.AI_API_KEY || '';
-const AI_BASE_URL = (process.env.AI_BASE_URL || 'https://api.runcrate.ai/v1').replace(/\/+$/, '');
-const AI_MODEL = process.env.AI_MODEL || 'deepseek-ai/DeepSeek-V4.1-Flash-1017';
-const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 120000;
-const MAX_AI_BODY = 512 * 1024;
 
 // Minimal .env reader so the server needs no dependencies.
 function loadEnvFile(file) {
@@ -206,117 +201,6 @@ async function handleUpload(req, res) {
   return sendJson(res, 201, { name, size: stat.size, mtime: stat.mtimeMs });
 }
 
-function safeHost(url) {
-  try {
-    return new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).host;
-  } catch {
-    return '';
-  }
-}
-
-async function readBody(req, limit) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > limit) throw Object.assign(new Error('Permintaan terlalu besar'), { status: 413 });
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf8');
-}
-
-function providerMessage(raw, status) {
-  const text = String(raw || '').trim();
-  try {
-    const data = JSON.parse(text);
-    const detail = data?.error?.message || data?.error || data?.message;
-    if (typeof detail === 'string' && detail.trim()) return detail.trim().slice(0, 600);
-  } catch {
-    // Not JSON: the raw body is more useful than nothing.
-  }
-  return text.slice(0, 600) || `Penyedia AI menolak permintaan (HTTP ${status})`;
-}
-
-// Streams the provider's SSE straight through so the browser can type out tokens.
-async function handleAiChat(req, res) {
-  if (!AI_API_KEY || !AI_BASE_URL) {
-    return sendJson(res, 503, {
-      error: 'Proxy AI server belum lengkap: isi AI_API_KEY dan AI_BASE_URL di berkas .env, atau pakai Pengaturan AI di aplikasi.',
-    });
-  }
-
-  let body;
-  try {
-    body = JSON.parse(await readBody(req, MAX_AI_BODY));
-  } catch (error) {
-    return sendJson(res, error.status || 400, { error: 'Body JSON tidak valid' });
-  }
-
-  const messages = Array.isArray(body?.messages)
-    ? body.messages
-        .filter(item => item && typeof item.content === 'string' && ['system', 'user', 'assistant'].includes(item.role))
-        .slice(-40)
-    : [];
-  if (!messages.length) return sendJson(res, 400, { error: 'messages kosong' });
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
-  res.on('close', () => {
-    clearTimeout(timer);
-    controller.abort();
-  });
-
-  let upstream;
-  try {
-    upstream = await fetch(`${AI_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${AI_API_KEY}`,
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify({
-        model: typeof body.model === 'string' && body.model.trim() ? body.model.trim() : AI_MODEL,
-        messages,
-        stream: true,
-        temperature: 0.7,
-      }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    clearTimeout(timer);
-    const reason = error.name === 'AbortError'
-      ? 'Penyedia AI tidak menjawab dalam batas waktu'
-      : `Tidak bisa menghubungi ${safeHost(AI_BASE_URL)}`;
-    return sendJson(res, 502, { error: `${reason}. Periksa AI_BASE_URL dan koneksi server.` });
-  }
-
-  if (!upstream.ok || !upstream.body) {
-    clearTimeout(timer);
-    const detail = await upstream.text().catch(() => '');
-    return sendJson(res, upstream.status || 502, { error: providerMessage(detail, upstream.status) });
-  }
-
-  res.writeHead(200, {
-    'Content-Type': upstream.headers.get('content-type') || 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-store',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-
-  try {
-    for await (const chunk of upstream.body) {
-      if (res.writableEnded) break;
-      res.write(chunk);
-    }
-  } catch {
-    // Client disconnected or the provider cut the stream mid-answer.
-  } finally {
-    clearTimeout(timer);
-    if (!res.writableEnded) res.end();
-  }
-}
-
 async function handleDelete(req, res, name) {
   const base = path.basename(name);
   if (base !== name || !/\.(mp4|webm)$/i.test(base)) {
@@ -343,16 +227,12 @@ const server = http.createServer(async (req, res) => {
   try {
     if (pathname === '/api/ai/config') {
       if (req.method !== 'GET') return sendJson(res, 405, { error: 'Metode tidak didukung' });
-      return sendJson(res, 200, {
-        configured: Boolean(AI_API_KEY && AI_BASE_URL),
-        model: AI_MODEL,
-        baseUrl: safeHost(AI_BASE_URL),
-      });
+      return aiProxy.sendConfig(res);
     }
 
     if (pathname === '/api/ai/chat') {
       if (req.method !== 'POST') return sendJson(res, 405, { error: 'Metode tidak didukung' });
-      return await handleAiChat(req, res);
+      return await aiProxy.handleChat(req, res);
     }
 
     if (pathname === '/api/videos') {

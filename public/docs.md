@@ -264,7 +264,7 @@ const naik = spring({ frame: frame - 12, fps: FPS, config: { damping: 14 } });
 
 Tab **AI** menulis composition dari deskripsi. Hasilnya bisa dipasang ke editor dengan **Pakai kode** atau langsung dirender dengan **Render**. Skill yang dipakai AI bisa dipilih di tab itu; berkas skill ada di folder `skills/`.
 
-Kunci AI dibaca server dari `AI_API_KEY`, `AI_BASE_URL`, dan `AI_MODEL` (lihat `.env.example`). Tanpa server, isi base URL dan kunci di **Pengaturan AI**; nilainya hanya tersimpan di perangkat.
+Kunci AI dibaca server dari `AI_API_KEY`, `AI_BASE_URL`, dan `AI_MODEL` (lihat `.env.example`). Di Vercel, isi variabel yang sama di **Settings → Environment Variables**; fungsi di `api/` memakainya saat runtime sehingga kunci tidak perlu ada di repo. Tanpa server, isi base URL dan kunci di **Pengaturan AI**; nilainya hanya tersimpan di perangkat.
 
 ---
 
